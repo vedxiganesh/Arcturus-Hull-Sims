@@ -622,3 +622,52 @@ def test_smoke_uses_small_memory(site, capsys):
     hs.main(["new", "--topology", TOPO, "--study", "smk2", "--speeds", "2.5", "--x0", "0,0",
              "--smoke", "--dry-run"])
     assert "8 cores  40G" in capsys.readouterr().out
+
+
+def _stub_prep(monkeypatch, fo, stats_seq):
+    """Replace every Fluent call prepare_case makes; hull_stats returns stats_seq in order."""
+    seq = iter(stats_seq)
+    monkeypatch.setattr(fo, "read_case", lambda *a, **k: None)
+    monkeypatch.setattr(fo, "hull_stats", lambda *a, **k: next(seq))
+    monkeypatch.setattr(fo, "rotate_translate", lambda *a, **k: "settings")
+    monkeypatch.setattr(fo, "set_inlet_speed", lambda *a, **k: [])
+    monkeypatch.setattr(fo, "update_init_defaults", lambda *a, **k: {})
+    monkeypatch.setattr(fo, "set_time_step", lambda *a, **k: None)
+    monkeypatch.setattr(fo, "create_sweep_reports", lambda *a, **k: [])
+    monkeypatch.setattr(fo, "clear_convergence_conditions", lambda *a, **k: None)
+    monkeypatch.setattr(fo, "relativize_report_files", lambda *a, **k: None)
+    monkeypatch.setattr(fo, "initialize", lambda *a, **k: None)
+    monkeypatch.setattr(fo, "check_water_level", lambda *a, **k: {"ok": True})
+
+
+def test_prepare_case_baseline_is_measured_in_session(site, monkeypatch, tmp_path):
+    """Regression 2026-09-29 (cluster, 21 procs): the template centroid there sat 1.9e-4 m
+    from the locally measured topology value, so checking the move against topology.json
+    failed every case although the move itself was exact."""
+    import numpy as np
+
+    import fluent_ops as fo
+    from common import case_transform
+
+    topo = layout.load_topology(TOPO)
+    ref = np.asarray(topo["template_hull_stats"]["centroid"])
+    here = ref + np.array([1.7e-4, -2.5e-5, 1.88e-4])  # the offset the cluster showed
+    xf = case_transform(topo, 1.0, 0.01)
+
+    def stats(c):
+        return {**topo["template_hull_stats"], "centroid": list(map(float, c)), "zmin": -0.25}
+
+    _stub_prep(monkeypatch, fo, [stats(here), stats(xf.apply(here)[0])])
+    facts = fo.prepare_case(None, topo, Path("t.cas.h5"), 1.0, 0.01, 2.5, 0.005, tmp_path)
+    assert facts["transform_centroid_err_m"] < 1e-9
+    assert facts["template_centroid_diff_m"] == pytest.approx(1.88e-4)
+
+    far = ref + np.array([0.0, 0.0, 0.02])  # a template that was moved: refuse
+    _stub_prep(monkeypatch, fo, [stats(far), stats(xf.apply(far)[0])])
+    with pytest.raises(fo.CaseSetupError, match="not the template"):
+        fo.prepare_case(None, topo, Path("t.cas.h5"), 1.0, 0.01, 2.5, 0.005, tmp_path)
+
+    bad_move = xf.apply(here)[0] + np.array([0.0, 0.0, 1e-3])  # a real transform error still fails
+    _stub_prep(monkeypatch, fo, [stats(here), stats(bad_move)])
+    with pytest.raises(fo.CaseSetupError, match="transform check FAILED"):
+        fo.prepare_case(None, topo, Path("t.cas.h5"), 1.0, 0.01, 2.5, 0.005, tmp_path)

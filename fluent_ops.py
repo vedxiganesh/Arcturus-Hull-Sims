@@ -242,7 +242,14 @@ def _match_args(available: list[str], wanted: dict[str, tuple[str, ...]]) -> dic
 
 
 def verify_transform(before: dict, after: dict, xf: CaseTransform, tol: float = 1e-5) -> float:
-    """The vertex centroid moves exactly like a point under a rigid motion."""
+    """The vertex centroid moves exactly like a point under a rigid motion.
+
+    `before` and `after` must come from the SAME session: the centroid is a
+    mean over the returned surface vertices, and that set depends on the
+    partitioning (VERIFIED 2026-09-29: the template's centroid measured
+    locally on 4 processes and on the cluster on 21 differ by 1.9e-4 m, with
+    x off although a pitch rotation cannot change x).
+    """
     expected = xf.apply(np.asarray(before["centroid"]))[0]
     err = float(np.max(np.abs(np.asarray(after["centroid"]) - expected)))
     if err > tol:
@@ -252,6 +259,12 @@ def verify_transform(before: dict, after: dict, xf: CaseTransform, tol: float = 
             f"prompt order."
         )
     return err
+
+
+#: How far the template's hull centroid, measured in the running session, may
+#: sit from the value stored in topology.json. Partitioning alone moves it
+#: ~2e-4 m; a wrong or moved template moves it by the motion itself.
+TEMPLATE_CENTROID_TOL_M = 2e-3
 
 
 # ---------------------------------------------------------------------------
@@ -553,9 +566,16 @@ def prepare_case(solver, topo: Topology, template: Path, theta: float, z: float,
     xf = case_transform(topo, theta, z)
 
     read_case(solver, str(template))
+    before = hull_stats(solver, topo)
+    tmpl_diff = float(np.max(np.abs(np.asarray(before["centroid"]) - np.asarray(tmpl_stats["centroid"]))))
+    log(f"template hull centroid here vs topology.json: {tmpl_diff:.2e} m (partitioning moves it ~2e-4)")
+    if tmpl_diff > TEMPLATE_CENTROID_TOL_M:
+        raise CaseSetupError(
+            f"template hull centroid {before['centroid']} is {tmpl_diff:.3g} m from topology.json's "
+            f"{tmpl_stats['centroid']}: this is not the template the topology was measured on")
     route = rotate_translate(solver, list(topo["foreground_cell_zones"]), xf)
     after = hull_stats(solver, topo)
-    err = verify_transform(tmpl_stats, after, xf)
+    err = verify_transform(before, after, xf)
     clearance = after["zmin"] - topo["bottom_z"]
     log(f"transform via {route}: centroid err {err:.2e} m; hull zmin {after['zmin']:.4f} "
         f"(clearance to bottom {clearance:.3f} m)")
@@ -579,6 +599,8 @@ def prepare_case(solver, topo: Topology, template: Path, theta: float, z: float,
         "transform": xf.__dict__,
         "transform_route": route,
         "transform_centroid_err_m": err,
+        "template_centroid_diff_m": tmpl_diff,
+        "hull_before": before,
         "hull_after": after,
         "bottom_clearance_m": clearance,
         "initialized": True,
