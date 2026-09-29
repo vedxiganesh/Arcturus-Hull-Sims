@@ -86,6 +86,70 @@ class Slurm:
         if ids:
             self._run(["scancel", *ids], capture_output=True, text=True)
 
+    def max_rss_gb(self, job: str) -> float | None:
+        """Peak memory of a finished job (largest step), from sacct."""
+        r = self._run(["sacct", "-j", job, "-n", "-P", "-o", "MaxRSS"], capture_output=True, text=True)
+        if r.returncode != 0:
+            return None
+        vals = [parse_mem_gb(v) for v in r.stdout.split()]
+        vals = [v for v in vals if v is not None]
+        return max(vals) if vals else None
+
+    def qos_limits(self, partition: str) -> dict:
+        """Per-user limits of the partition's QOS (best effort; {} if unavailable)."""
+        r = self._run(["scontrol", "show", "partition", partition, "--oneliner"],
+                      capture_output=True, text=True)
+        if r.returncode != 0:
+            return {}
+        fields = dict(kv.split("=", 1) for kv in r.stdout.split() if "=" in kv)
+        out = {"partition": partition, "qos": fields.get("QoS", "N/A"),
+               "max_time": fields.get("MaxTime"), "max_mem_per_node": fields.get("MaxMemPerNode")}
+        if out["qos"] in ("N/A", "", None):
+            return out
+        r = self._run(["sacctmgr", "-n", "-P", "show", "qos", out["qos"],
+                       "format=MaxTRESPU,MaxJobsPU,MaxSubmitPU,MaxWall"], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            tres, jobs, submit, wall = (r.stdout.strip().splitlines()[0].split("|") + ["", "", "", ""])[:4]
+            out.update(max_tres_pu=tres, max_jobs_pu=jobs, max_submit_pu=submit, max_wall=wall)
+        return out
+
+
+def parse_mem_gb(s: str | None) -> float | None:
+    """'120G', '4096M', '32679208K', '1T' -> GB (Slurm units are binary)."""
+    if not s:
+        return None
+    s = s.strip().upper()
+    mult = {"K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1.0, "T": 1024.0}
+    try:
+        if s[-1] in mult:
+            return float(s[:-1]) * mult[s[-1]]
+        return float(s) / 1024 ** 3  # bare bytes
+    except ValueError:
+        return None
+
+
+def parse_tres(s: str | None) -> dict[str, str]:
+    """'cpu=192,mem=256G' -> {'cpu': '192', 'mem': '256G'}."""
+    return dict(kv.split("=", 1) for kv in (s or "").split(",") if "=" in kv)
+
+
+def effective_lanes(limits: dict, slurm_cfg: dict, extra_jobs: int = 0) -> tuple[int, list[str]]:
+    """How many case jobs the QOS lets run at once, and why it is fewer than the lanes."""
+    lanes, why = slurm_cfg["lanes"], []
+    tres = parse_tres(limits.get("max_tres_pu"))
+    mem_cap, mem = parse_mem_gb(tres.get("mem")), parse_mem_gb(slurm_cfg["mem"])
+    if mem_cap and mem and int(mem_cap // mem) < lanes:
+        lanes = int(mem_cap // mem)
+        why.append(f"QOS {limits['qos']} caps memory at {tres['mem']} per user = {lanes} x {slurm_cfg['mem']}")
+    if tres.get("cpu", "").isdigit() and int(tres["cpu"]) // slurm_cfg["ntasks"] < lanes:
+        lanes = int(tres["cpu"]) // slurm_cfg["ntasks"]
+        why.append(f"QOS {limits['qos']} caps cpus at {tres['cpu']} per user")
+    mj = limits.get("max_jobs_pu", "")
+    if mj.isdigit() and int(mj) - extra_jobs < lanes:
+        lanes = int(mj) - extra_jobs
+        why.append(f"QOS {limits['qos']} allows {mj} running jobs per user")
+    return max(lanes, 0), why
+
 
 # ---------------------------------------------------------------------------
 # JSON / lock
@@ -256,7 +320,7 @@ def register_case(sp, study, led, topo, speed, theta, z, chain: str, iteration: 
     return cid
 
 
-def submit_case(sp, study, led, topo, cid: str, slurm: Slurm) -> str:
+def submit_case(sp, study, led, topo, cid: str, slurm: Slurm) -> str | None:
     c = led["cases"][cid]
     plan = case_plan(topo, study, c["speed"])
     req = {"case_id": cid, "study": sp.name, "topology": sp.topology,
@@ -277,7 +341,12 @@ def submit_case(sp, study, led, topo, cid: str, slurm: Slurm) -> str:
             "--open-mode=append",  # a requeued job keeps its id: keep every attempt's log
             "--output", str(logs / "%j.out"), "--error", str(logs / "%j.err")]
     script = [str(layout.CODE_DIR / "cluster" / "case_job.sh"), sp.name, cid]
-    job = slurm.submit(opts, script)
+    try:
+        job = slurm.submit(opts, script)
+    except SubmitError as exc:  # e.g. a QOS submit limit: the next advance tries again
+        _emit(sp, "case", _case_subject(sp, cid), "UNSUBMITTED", f"{_case_tag(c)} sbatch refused: "
+              f"{str(exc).splitlines()[-1][:200]}")
+        return None
     c["job"] = job
     c["jobs"].append(job)
     c["submitted"] = _now()
@@ -319,6 +388,7 @@ def resolve_cases(sp, study, led, topo, slurm: Slurm, active: dict[str, str]) ->
         cdir = sp.case_dir(cid)
         st = read_json(cdir / layout.STATUS_FILE, {}) or {}
         if st.get("state") == "complete":
+            _record_mem(c, slurm, c.get("job"))
             try:
                 row = collect.reduce_case(topo, cdir, cg)
             except Exception as exc:  # malformed output: do not rerun blindly
@@ -331,7 +401,8 @@ def resolve_cases(sp, study, led, topo, slurm: Slurm, active: dict[str, str]) ->
                 c["row"], c["state"] = row, DONE_CASE
                 ok = quality_ok(row, study)
                 _emit(sp, "case", _case_subject(sp, cid), "REDUCED",
-                      f"{_case_tag(c)} {_fmt_r(row)}{'' if ok else '  [quality: NOT ok]'}")
+                      f"{_case_tag(c)} {_fmt_r(row)}{'' if ok else '  [quality: NOT ok]'}"
+                      f"{_fmt_mem(c, study)}")
             continue
         job = c.get("job")
         if job and job in active:
@@ -339,11 +410,20 @@ def resolve_cases(sp, study, led, topo, slurm: Slurm, active: dict[str, str]) ->
         if job is None:  # new, or cancelled by `hs stop`
             submit_case(sp, study, led, topo, cid, slurm)
             continue
-        c["failures"] += 1
+        _record_mem(c, slurm, job)
         why = st.get("state") or "no status.json (died before the driver started)"
         if st.get("error"):
-            why += f": {st['error'][:200]}"
-        if c["failures"] <= int(study.get("max_retries", 3)):
+            why += f" in {st.get('phase', '?')}: {st['error'][:200]}"
+        if st.get("retryable") is False and st.get("error_type") != "CaseSetupError":
+            # A code/identity error: every case would hit it. Halt instead of burning retries.
+            halt(sp, led, slurm, f"{cid}: {why}", active)
+            return
+        c["failures"] += 1
+        if st.get("retryable") is False:
+            c["state"] = BAD_CASE
+            c["note"] = f"not retried (case setup error): {why}"
+            _emit(sp, "case", _case_subject(sp, cid), "BAD", f"{_case_tag(c)} {c['note']}")
+        elif c["failures"] <= int(study.get("max_retries", 3)):
             _emit(sp, "case", _case_subject(sp, cid), "RETRY",
                   f"{_case_tag(c)} job {job} ended without completing ({why}); "
                   f"attempt {c['failures'] + 1}")
@@ -352,6 +432,36 @@ def resolve_cases(sp, study, led, topo, slurm: Slurm, active: dict[str, str]) ->
             c["state"] = BAD_CASE
             c["note"] = f"gave up after {c['failures']} failures; last: {why}"
             _emit(sp, "case", _case_subject(sp, cid), "BAD", f"{_case_tag(c)} {c['note']}")
+
+
+def _record_mem(c: dict, slurm, job: str) -> None:
+    fn = getattr(slurm, "max_rss_gb", None)
+    if fn and job:
+        try:
+            gb = fn(job)
+        except Exception:
+            gb = None
+        if gb is not None:
+            c["max_rss_gb"] = max(gb, c.get("max_rss_gb") or 0.0)
+
+
+def _fmt_mem(c: dict, study: dict) -> str:
+    gb = c.get("max_rss_gb")
+    return f"  maxRSS {gb:.1f}G of {study['slurm']['mem']}" if gb is not None else ""
+
+
+def halt(sp, led, slurm, reason: str, active: dict[str, str]) -> None:
+    """Stop the study on an error every case would hit. `hs resume` after the fix."""
+    ids = [c["job"] for c in led["cases"].values()
+           if c["state"] == LIVE_CASE and c["job"] and c["job"] in active]
+    slurm.cancel(ids)
+    for c in led["cases"].values():
+        if c["state"] == LIVE_CASE:
+            c["job"] = None  # resubmitted by `hs resume`, not counted as failures
+    led["stopped"] = True
+    _emit(sp, "study", sp.name, "HALTED",
+          f"non-retryable error, cancelled {len(ids)} job(s): {reason[:300]}  "
+          "-> fix, `hs sync push-code`, then `hs resume " + sp.name + "`")
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +581,8 @@ def submit_advance(sp, study, slurm: Slurm, deps: list[str]) -> str:
             "--nodes=1", "--ntasks=1", "--mem=4G", "--time", sc["advance_time"],
             "--output", str(sp.advance_log_dir / "%j.out")]
     script = [str(layout.CODE_DIR / "bin" / "hs"), "advance", sp.name]
+    if not deps:
+        return slurm.submit([*base, "--begin=now+15minutes"], script)
     try:
         return slurm.submit([*base, "--dependency", "afterany:" + ":".join(deps)], script)
     except SubmitError as exc:
@@ -513,6 +625,9 @@ def advance(sp: layout.StudyPaths, slurm: Slurm | None = None) -> str:
         active = slurm.active()
         try:
             resolve_cases(sp, study, led, topo, slurm, active)
+            if led.get("stopped"):  # halted on a non-retryable error
+                led["advance_job"] = None
+                return "halted"
             drive_chains(sp, study, led, topo, slurm)
             for cid, c in led["cases"].items():
                 if c["state"] == LIVE_CASE and c["job"] is None:
@@ -526,7 +641,13 @@ def advance(sp: layout.StudyPaths, slurm: Slurm | None = None) -> str:
         if prev and prev != own and prev in active:
             slurm.cancel([prev])  # superseded: this run re-arms below
         live = [c["job"] for c in led["cases"].values() if c["state"] == LIVE_CASE and c["job"]]
-        if live:
+        unsubmitted = sum(c["state"] == LIVE_CASE and not c["job"] for c in led["cases"].values())
+        if unsubmitted:
+            # sbatch refused some (e.g. a submit limit): poll rather than wait on the rest
+            led["advance_job"] = submit_advance(sp, study, slurm, [])
+            outcome = (f"{unsubmitted} case(s) not accepted by sbatch; {len(live)} live; "
+                       f"polling with advance {led['advance_job']}")
+        elif live:
             led["advance_job"] = submit_advance(sp, study, slurm, live)
             outcome = f"waiting on {len(live)} case job(s); next advance {led['advance_job']}"
         else:
@@ -606,16 +727,18 @@ def status_text(sp) -> str:
                    f"{st.get('rho', float('nan')):>5.2f}  {best.get('case_id', '-')}")
     out.append("")
     out.append(f"{'case':<30} {'it':>3} {'role':<8} {'state':<7} {'job':>9} {'fail':>4}  "
-               f"{'step':>11} {'s/step':>6} {'ETA':>7}  R_lift / R_pitch")
+               f"{'step':>11} {'s/step':>6} {'ETA':>7} {'maxRSS':>7}  R_lift / R_pitch")
     for cid, c in sorted(led["cases"].items(), key=lambda kv: (kv[1]["iteration"], kv[0])):
         s = read_json(sp.case_dir(cid) / layout.STATUS_FILE, {}) or {}
         step = f"{s.get('time_step', '-')}/{s.get('total_steps', '-')}" if s else "-"
         sps = s.get("s_per_step")
         eta = s.get("eta_s")
+        mem = f"{c['max_rss_gb']:.1f}G" if c.get("max_rss_gb") else "-"
         r = c.get("row") or {}
         rs = (f"{r['R_lift_N']:+.2f} / {r['R_pitch_Nm']:+.3f}"
               if isinstance(r.get("R_lift_N"), float) else (c.get("note") or "")[:40])
         out.append(f"{progress.short_case(cid, sp.topology):<30} {c['iteration']:>3} {c['role']:<8} "
                    f"{c['state']:<7} {str(c.get('job') or '-'):>9} {c['failures']:>4}  {step:>11} "
-                   f"{(f'{sps:.1f}' if sps else '-'):>6} {progress.fmt_hours(eta) if eta else '-':>7}  {rs}")
+                   f"{(f'{sps:.1f}' if sps else '-'):>6} {progress.fmt_hours(eta) if eta else '-':>7} "
+                   f"{mem:>7}  {rs}")
     return "\n".join(out)

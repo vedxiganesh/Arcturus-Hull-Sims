@@ -31,6 +31,14 @@ from common import (
 )
 
 
+class CaseSetupError(RuntimeError):
+    """The case itself is wrong (bad transform, all-air init, missing setting).
+
+    Deterministic: rerunning the same case reproduces it, so the orchestrator
+    does not retry it.
+    """
+
+
 def log(msg: str) -> None:
     print(f"[hullsweep {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -124,18 +132,31 @@ def write_case(solver, path: str, data: bool) -> None:
 
 
 def surface_vertices(solver, surfaces: list[str]) -> dict[str, np.ndarray]:
-    """Vertex coordinates per surface (mesh only; no solution data needed)."""
-    from ansys.fluent.core.services.field_data import SurfaceDataType
+    """Vertex coordinates per surface (mesh only; no solution data needed).
 
+    Request-object API (field_data.get_field_data(SurfaceFieldDataRequest)),
+    present in PyFluent 0.40.1 and the only one in 0.42.1: VERIFIED
+    2026-09-29, 0.42.1's LiveFieldData has no get_surface_data. The old
+    keyword API is kept as a fallback for older releases.
+    """
+    import ansys.fluent.core as pf
+
+    SurfaceDataType = pf.SurfaceDataType
     fd = solver.fields.field_data
     out = {}
     for s in surfaces:
-        res = fd.get_surface_data(surfaces=[s], data_types=[SurfaceDataType.Vertices])
+        if hasattr(fd, "get_field_data") and hasattr(pf, "SurfaceFieldDataRequest"):
+            res = fd.get_field_data(pf.SurfaceFieldDataRequest(surfaces=[s], data_types=[SurfaceDataType.Vertices]))
+        else:
+            res = fd.get_surface_data(surfaces=[s], data_types=[SurfaceDataType.Vertices])
         entry = res[s]
         verts = getattr(entry, "vertices", None)
         if verts is None and isinstance(entry, dict):
             verts = entry.get(SurfaceDataType.Vertices, entry.get("vertices"))
-        out[s] = np.asarray(verts, dtype=float).reshape(-1, 3)
+        arr = np.asarray(verts if verts is not None else [], dtype=float).reshape(-1, 3)
+        if arr.shape[0] == 0:
+            raise CaseSetupError(f"no vertices returned for surface {s!r} (entry type {type(entry).__name__})")
+        out[s] = arr
     return out
 
 
@@ -225,7 +246,7 @@ def verify_transform(before: dict, after: dict, xf: CaseTransform, tol: float = 
     expected = xf.apply(np.asarray(before["centroid"]))[0]
     err = float(np.max(np.abs(np.asarray(after["centroid"]) - expected)))
     if err > tol:
-        raise RuntimeError(
+        raise CaseSetupError(
             f"transform check FAILED: centroid {after['centroid']} vs expected "
             f"{expected.tolist()} (err {err:.3g} m). Wrong sign, axis, or TUI "
             f"prompt order."
@@ -334,7 +355,7 @@ def update_init_defaults(solver, inlet: str, speed: float) -> dict:
     umag = float(np.sqrt(np.dot(vel, vel)))
     if abs(umag - speed) > 1e-6 * max(speed, 1.0):
         if umag == 0.0:
-            raise RuntimeError("initialization defaults have zero velocity; cannot infer direction")
+            raise CaseSetupError("initialization defaults have zero velocity; cannot infer direction")
         r = speed / umag
         new = {f"{c}-velocity": float(v * r) for c, v in zip("xyz", vel)}
         for key in ("k", "omega"):
@@ -361,7 +382,7 @@ def set_time_step(solver, dt: float, max_iter: int) -> None:
                 return
         except Exception:
             continue
-    raise RuntimeError("time_step_size not found under run_calculation")
+    raise CaseSetupError("time_step_size not found under run_calculation")
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +549,7 @@ def prepare_case(solver, topo: Topology, template: Path, theta: float, z: float,
         log(f"WARNING: {m}")
     tmpl_stats = topo.get("template_hull_stats")
     if tmpl_stats is None:
-        raise RuntimeError("topology has no template_hull_stats; run `prepare_case.py template` first")
+        raise CaseSetupError("topology has no template_hull_stats; run `prepare_case.py template` first")
     xf = case_transform(topo, theta, z)
 
     read_case(solver, str(template))
@@ -631,7 +652,7 @@ def check_water_level(solver, topo: Topology, tol: float = 0.03) -> dict:
            "measured": measured, "ok": measured is not None and abs(measured - expected) <= tol}
     log(f"water-level check: {out}")
     if not out["ok"]:
-        raise RuntimeError(
+        raise CaseSetupError(
             f"initialized water fraction {measured} != flat-surface {expected:.4f} (tol {tol}); "
             "open-channel flat initialization did not take -- do not run this case."
         )

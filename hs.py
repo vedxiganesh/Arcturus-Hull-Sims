@@ -136,11 +136,14 @@ def build_study(a, topo) -> dict:
     if x0 is not None and len(x0) != 2:
         sys.exit("--x0 is THETA_DEG,Z_M")
 
-    slurm = {"partition": a.partition, "ntasks": a.ntasks, "lanes": a.lanes, "mem": a.mem,
+    slurm = {"partition": a.partition, "ntasks": a.ntasks, "lanes": a.lanes, "mem": a.mem or "120G",
              "time": a.time, "advance_partition": a.advance_partition, "advance_time": a.advance_time}
     run_override, stop_margin = None, 1500
     if a.smoke:
-        slurm.update(partition="mit_quicktest", ntasks=8, time="00:14:00", lanes=min(a.lanes, 3))
+        # quicktest caps memory per user (QOSMaxMemoryPerUser held 3 x 120G to one at a time,
+        # 2026-09-29); the 6.8M-cell case should need ~15-25G on 8 cores
+        slurm.update(partition="mit_quicktest", ntasks=8, time="00:14:00", lanes=min(a.lanes, 3),
+                     mem=a.mem or "40G")
         run_override, stop_margin = {"steps": 10, "settle_time_s": 0.0}, 60
     need = ledger.license_need(slurm)
     if need > ledger.HPC_POOL and not a.ignore_license_limit:
@@ -157,6 +160,39 @@ def build_study(a, topo) -> dict:
         "run_override": run_override, "stop_margin_s": stop_margin, "slurm": slurm,
         "smoke": bool(a.smoke),
     }
+
+
+def qos_check(study) -> list[str]:
+    """Per-user QOS limits of the case and advance partitions, and what they mean for lanes."""
+    import ledger
+
+    sc = study["slurm"]
+    try:
+        slurm = ledger.Slurm()
+        case_lim = slurm.qos_limits(sc["partition"])
+        adv_lim = (case_lim if sc["advance_partition"] == sc["partition"]
+                   else slurm.qos_limits(sc["advance_partition"]))
+    except Exception as exc:  # no Slurm here (tests, local)
+        return [f"  qos          not checked ({type(exc).__name__})"]
+    lines = []
+    for lim in (case_lim, adv_lim):
+        if lim:
+            lines.append(f"  qos          {lim['partition']}: QOS {lim.get('qos')}  per user: "
+                         f"TRES {lim.get('max_tres_pu') or '-'}  jobs {lim.get('max_jobs_pu') or '-'}  "
+                         f"submit {lim.get('max_submit_pu') or '-'}  wall {lim.get('max_wall') or lim.get('max_time')}")
+        if case_lim is adv_lim:
+            break
+    extra = 1 if sc["advance_partition"] == sc["partition"] else 0
+    eff, why = ledger.effective_lanes(case_lim, sc, extra_jobs=extra)
+    if eff == 0:
+        sys.exit("QOS limits leave room for no case job at all: " + "; ".join(why))
+    if eff < sc["lanes"]:
+        lines.append(f"  WARNING      only {eff} of {sc['lanes']} lanes can run at once: " + "; ".join(why))
+    sub = case_lim.get("max_submit_pu", "")
+    if sub.isdigit():
+        lines.append(f"  note         at most {sub} queued+running jobs per user in {sc['partition']}; "
+                     "cases sbatch refuses are retried by the next advance")
+    return lines
 
 
 def print_plan(sp, study, topo, seeds, skipped) -> None:
@@ -226,6 +262,8 @@ def cmd_new(a) -> None:
                      "template": {"name": template.name, "sha1": file_sha1(template)}}
     study["code_version"] = ledger.code_version()
     print_plan(sp, study, topo, seeds, skipped)
+    for ln in qos_check(study):
+        print(ln)
     if a.dry_run:
         print("\n--dry-run: nothing written")
         return
@@ -347,7 +385,8 @@ def main(argv=None) -> None:
     n.add_argument("--partition", default="mit_preemptable")
     n.add_argument("--ntasks", type=int, default=21)
     n.add_argument("--lanes", type=int, default=4, help="max concurrent case jobs")
-    n.add_argument("--mem", default="120G")
+    n.add_argument("--mem", help="per case job (default 120G; 40G with --smoke). "
+                                  "Check maxRSS in `hs status` / progress.log and size down")
     n.add_argument("--time", default="06:00:00")
     n.add_argument("--advance-partition", default="mit_quicktest")
     n.add_argument("--advance-time", default="00:10:00")

@@ -218,8 +218,14 @@ class FakeSlurm:
         self.n = 1000
         self.jobs: dict[str, dict] = {}
         self.cancelled: list[str] = []
+        self.refuse_cases = False
+
+    def max_rss_gb(self, job):
+        return 18.5
 
     def submit(self, opts, script):
+        if self.refuse_cases and script[0].endswith("case_job.sh"):
+            raise ledger.SubmitError("sbatch: error: QOSMaxSubmitJobPerUserLimit")
         self.n += 1
         jid = str(self.n)
         self.jobs[jid] = {"opts": opts, "script": script, "live": True}
@@ -273,13 +279,15 @@ def fake_reduce(monkeypatch):
     monkeypatch.setattr(ledger.collect, "reduce_case", reduce_case)
 
 
-def finish_all(sp, slurm, state="complete"):
+def finish_all(sp, slurm, state="complete", only=None, **status):
     led = json.loads(sp.ledger_json.read_text())
     for cid, c in led["cases"].items():
+        if only and cid not in only:
+            continue
         if c["state"] == "queued" and c["job"] and slurm.jobs[c["job"]]["live"]:
             slurm.jobs[c["job"]]["live"] = False
             if state:
-                (sp.case_dir(cid) / layout.STATUS_FILE).write_text(json.dumps({"state": state}))
+                (sp.case_dir(cid) / layout.STATUS_FILE).write_text(json.dumps({"state": state, **status}))
 
 
 def test_advance_runs_study_to_convergence(site, fake_reduce):
@@ -499,3 +507,118 @@ def test_code_tarball():
     assert members["cluster/case_job.sh"].mode == 0o755
     assert b"\r\n" not in tar.extractfile("cluster/case_job.sh").read()
     assert json.loads(tar.extractfile("VERSION").read())["content_sha1"] == version["content_sha1"]
+
+
+# ---------------------------------------------------------------------------
+# smoke-test fixes (2026-09-29): field data API, retry policy, memory, QOS
+# ---------------------------------------------------------------------------
+
+
+def test_surface_vertices_uses_request_api():
+    """PyFluent 0.42.1: LiveFieldData has get_field_data only (no get_surface_data)."""
+    pf = pytest.importorskip("ansys.fluent.core")
+    import numpy as np
+
+    import fluent_ops as fo
+
+    seen = []
+
+    class LiveFieldData:  # the 0.42.1 surface
+        def get_field_data(self, req):
+            seen.append(req)
+            return {s: {pf.SurfaceDataType.Vertices: np.arange(6.0)} for s in req.surfaces}
+
+    solver = type("S", (), {})()
+    solver.fields = type("F", (), {"field_data": LiveFieldData()})()
+    out = fo.surface_vertices(solver, ["wall_mainhull"])
+    assert out["wall_mainhull"].shape == (2, 3)
+    assert isinstance(seen[0], pf.SurfaceFieldDataRequest)
+
+    class Empty:
+        def get_field_data(self, req):
+            return {s: {} for s in req.surfaces}
+
+    solver.fields.field_data = Empty()
+    with pytest.raises(fo.CaseSetupError, match="no vertices"):
+        fo.surface_vertices(solver, ["wall_mainhull"])
+
+
+def test_code_error_halts_study_and_resume_resubmits(site, fake_reduce):
+    sp, st = new_study(site)
+    slurm = FakeSlurm()
+    ledger.init_study(sp, st)
+    ledger.advance(sp, slurm)
+    first = f"{TOPO}_V2p50_t+0p00_z+0p0mm"
+    finish_all(sp, slurm, state="failed", only=[first], retryable=False, error_type="AttributeError",
+               phase="prep", error="AttributeError('LiveFieldData ...')")
+    assert ledger.advance(sp, slurm) == "halted"
+    led = json.loads(sp.ledger_json.read_text())
+    assert led["stopped"] and led["advance_job"] is None
+    assert all(c["job"] is None and c["failures"] == 0 for c in led["cases"].values())
+    assert len(slurm.cancelled) == 2  # the two other live cases
+    assert "HALTED" in sp.progress_log.read_text()
+    n = len(slurm.case_jobs())
+    ledger.resume(sp, slurm)
+    assert len(slurm.case_jobs()) == n + 3
+
+
+def test_case_setup_error_is_bad_without_retry(site, fake_reduce):
+    sp, st = new_study(site)
+    slurm = FakeSlurm()
+    ledger.init_study(sp, st)
+    ledger.advance(sp, slurm)
+    first = f"{TOPO}_V2p50_t+0p00_z+0p0mm"
+    finish_all(sp, slurm, state="failed", only=[first], retryable=False, error_type="CaseSetupError",
+               error="CaseSetupError('initialized water fraction ...')")
+    ledger.advance(sp, slurm)
+    led = json.loads(sp.ledger_json.read_text())
+    assert led["cases"][first]["state"] == "bad" and not led["stopped"]
+    assert len(slurm.case_jobs()) == 3  # nothing resubmitted
+
+
+def test_max_rss_recorded(site, fake_reduce):
+    sp, st = new_study(site)
+    slurm = FakeSlurm()
+    ledger.init_study(sp, st)
+    ledger.advance(sp, slurm)
+    finish_all(sp, slurm)
+    ledger.advance(sp, slurm)
+    led = json.loads(sp.ledger_json.read_text())
+    assert all(c.get("max_rss_gb") == 18.5 for c in led["cases"].values() if c["state"] == "done")
+    assert "maxRSS 18.5G of 120G" in sp.progress_log.read_text()
+    assert "18.5G" in ledger.status_text(sp)
+
+
+def test_refused_submission_polls(site, fake_reduce):
+    sp, st = new_study(site)
+    slurm = FakeSlurm()
+    slurm.refuse_cases = True
+    ledger.init_study(sp, st)
+    out = ledger.advance(sp, slurm)
+    assert "not accepted" in out and "UNSUBMITTED" in sp.progress_log.read_text()
+    adv = [v for v in slurm.jobs.values() if v["script"][-2] == "advance"]
+    assert adv and "--begin=now+15minutes" in adv[-1]["opts"]
+    slurm.refuse_cases = False
+    ledger.advance(sp, slurm)
+    assert len(slurm.case_jobs()) == 3
+
+
+def test_parse_mem_and_effective_lanes():
+    assert ledger.parse_mem_gb("120G") == 120.0
+    assert ledger.parse_mem_gb("32679208K") == pytest.approx(31.17, abs=0.01)
+    assert ledger.parse_mem_gb("4096M") == 4.0 and ledger.parse_mem_gb("") is None
+    sc = {"lanes": 3, "mem": "120G", "ntasks": 8}
+    lim = {"qos": "quick", "max_tres_pu": "cpu=64,mem=200G", "max_jobs_pu": "4"}
+    eff, why = ledger.effective_lanes(lim, sc, extra_jobs=1)
+    assert eff == 1 and "memory" in why[0]
+    eff, _ = ledger.effective_lanes(lim, {**sc, "mem": "40G"}, extra_jobs=1)
+    assert eff == 3
+    assert ledger.effective_lanes({}, sc) == (3, [])
+
+
+def test_smoke_uses_small_memory(site, capsys):
+    import hs
+
+    hs.main(["new", "--topology", TOPO, "--study", "smk2", "--speeds", "2.5", "--x0", "0,0",
+             "--smoke", "--dry-run"])
+    assert "8 cores  40G" in capsys.readouterr().out

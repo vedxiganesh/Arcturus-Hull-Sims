@@ -55,6 +55,17 @@ def log(msg):
     print(f"[case {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+class CaseIdentityError(RuntimeError):
+    """The job does not match its study (wrong template, topology, or request)."""
+
+
+#: Failures that recur on every attempt: a bug or a bad case, not the cluster.
+#: status.json marks them retryable=false so the orchestrator stops at once.
+#: Anything else (license denial, Fluent/gRPC death, node trouble) is retried.
+DETERMINISTIC = (CaseIdentityError, AttributeError, TypeError, NameError, KeyError, ImportError,
+                 ValueError, IndexError, ZeroDivisionError)
+
+
 class Case:
     """Paths, request, and progress reporting for one case."""
 
@@ -92,14 +103,14 @@ class Case:
 
 def check_identity(case: Case, topo, template: Path) -> None:
     if not case.cid.startswith(f"{topo.name}_V"):
-        raise RuntimeError(f"case id {case.cid} does not belong to topology {topo.name}")
+        raise CaseIdentityError(f"case id {case.cid} does not belong to topology {topo.name}")
     if case.req["case_id"] != case.cid or case.req["study"] != case.sp.name:
-        raise RuntimeError(f"request.json names {case.req['case_id']}/{case.req['study']}, "
+        raise CaseIdentityError(f"request.json names {case.req['case_id']}/{case.req['study']}, "
                            f"not {case.cid}/{case.sp.name}")
     want = case.study["sha1"]["template"]
     got = file_sha1(template)
     if template.name != want["name"] or got != want["sha1"]:
-        raise RuntimeError(f"template {template.name} ({got[:10]}) differs from the one the study was "
+        raise CaseIdentityError(f"template {template.name} ({got[:10]}) differs from the one the study was "
                            f"created with ({want['name']}, {want['sha1'][:10]})")
 
 
@@ -250,16 +261,19 @@ def main() -> int:
     log(f"request: {json.dumps(case.req)}")
     t_start = time.time()
     solver = None
+    phase = "check"
     try:
         check_identity(case, topo, template)
         resume = latest_autosave(case.dir) if case.cas.exists() and case.sidecar.exists() else None
         if resume is not None:
             set_aside_report_files(case.dir)
 
+        phase = "launch"
         solver = pyfluent.launch_fluent(mode="solver", ui_mode=UI_MODE, processor_count=args.procs,
                                         cwd=str(case.dir), start_timeout=600, additional_arguments="")
         version = str(getattr(solver, "get_fluent_version", lambda: "?")())
 
+        phase = "prep"
         if resume is not None:
             case.emit("RESUME", f"job {job} node {node} restart {restarts} from {resume.name}")
             fo.read_case(solver, str(case.cas))
@@ -281,6 +295,7 @@ def main() -> int:
             case.status(state="prepped")
             return 0
 
+        phase = "solve"
         t, n = flow_state(solver)
         done = n or 0
         if resume is None and t is not None and abs(t) > 1e-9:
@@ -307,9 +322,11 @@ def main() -> int:
                               f"({sps:.1f} s/step)")
         return 0
     except Exception as exc:
-        log(f"EXCEPTION: {exc!r}")
-        case.status(state="failed", error=repr(exc))
-        case.emit("FAILED", repr(exc)[:300])
+        retryable = not isinstance(exc, (*DETERMINISTIC, fo.CaseSetupError))
+        log(f"EXCEPTION in {phase}: {exc!r} (retryable={retryable})")
+        case.status(state="failed", phase=phase, error=repr(exc), error_type=type(exc).__name__,
+                    retryable=retryable)
+        case.emit("FAILED", f"{phase}: {repr(exc)[:300]}{'' if retryable else '  [not retryable]'}")
         raise
     finally:
         if solver is not None:
