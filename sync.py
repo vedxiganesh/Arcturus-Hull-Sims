@@ -110,18 +110,34 @@ def push_code(dry_run: bool = False) -> dict:
         print("\n".join(f"  {f}" for f in files))
         return version
     dest = layout.remote_code().replace("~", "$HOME", 1)
+    # $HOME is NFS: a script a running job still has open (case_job.sh, bin/hs)
+    # leaves a .nfs* file behind when deleted, and its directory cannot be
+    # removed. Busy leftovers are renamed aside, never allowed to abort the push.
     script = f"""set -e
-new="{dest}.new"; old="{dest}.old"
-rm -rf "$new" "$old"; mkdir -p "$new"
+dest="{dest}"; new="$dest.new"; old="$dest.old"; stamp=$(date +%s)
+for d in "$new" "$old"; do
+    if [ -e "$d" ]; then rm -rf "$d" 2>/dev/null || mv "$d" "$d.busy.$stamp"; fi
+done
+rm -rf "$dest".*.busy.* 2>/dev/null || true
+mkdir -p "$new"
 tar xzf - -C "$new"
-if [ -d "{dest}" ]; then mv "{dest}" "$old"; fi
-mv "$new" "{dest}"; rm -rf "$old"
-echo "code now at {dest}:"; cat "{dest}/VERSION"
+if [ -d "$dest" ]; then mv "$dest" "$old"; fi
+mv "$new" "$dest"
+rm -rf "$old" 2>/dev/null || echo "note: $old is held by running jobs; it is cleared on a later push"
+echo "REMOTE_CONTENT $(sed -n 's/.*"content_sha1": "\\([0-9a-f]*\\)".*/\\1/p' "$dest/VERSION")"
 """
-    p = _ssh(script, stdin=subprocess.PIPE)
-    p.stdin.write(code_tarball(files, version))
-    p.stdin.close()
-    _finish(p, "push-code")
+    p = _ssh(script, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    out, _ = p.communicate(code_tarball(files, version))
+    text = out.decode(errors="replace")
+    print(text.rstrip())
+    if p.returncode != 0:
+        sys.exit(f"push-code failed on the cluster (exit {p.returncode}); the cluster still runs the old code")
+    got = next((ln.split()[1] for ln in text.splitlines() if ln.startswith("REMOTE_CONTENT ") and
+                len(ln.split()) > 1), None)
+    if got != version["content_sha1"]:
+        sys.exit(f"push-code did NOT take: cluster reports content {got}, local is "
+                 f"{version['content_sha1'][:10]}")
+    print(f"verified: {layout.remote_code()} is content {got[:10]} (commit {version['commit']})")
     return version
 
 

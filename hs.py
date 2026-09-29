@@ -204,7 +204,9 @@ def print_plan(sp, study, topo, seeds, skipped) -> None:
     print(f"  topology     {topo.name}  ({topo.path})")
     print(f"  template     {study['sha1']['template']['name']}  sha1 {study['sha1']['template']['sha1'][:12]}")
     print(f"  code         {study['code_version'].get('content_sha1', '?')[:12]} "
-          f"(commit {study['code_version'].get('commit', '?')})")
+          f"(commit {study['code_version'].get('commit', '?')}"
+          f"{', dirty' if study['code_version'].get('dirty') else ''}, "
+          f"pushed {study['code_version'].get('pushed_at', '?')})")
     print(f"  pool dir     {sp.pool_dir}")
     print(f"  scratch dir  {sp.scratch_dir}")
     print(f"  progress     {sp.progress_log}")
