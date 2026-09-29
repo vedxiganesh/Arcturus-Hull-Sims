@@ -1,0 +1,21 @@
+{
+ "initialization_type": "standard",
+ "reference_frame": "relative",
+ "defaults": {
+  "k": 0.02343750000000007,
+  "omega": 1424.804926957131,
+  "phase-2-mp": 0,
+  "pressure": 0.0,
+  "x-velocity": 0,
+  "y-velocity": 2.500000000000004,
+  "z-velocity": 0
+ },
+ "localized_turb_init": {
+  "enabled": false
+ },
+ "open_channel_auto_init": {
+  "boundary_zone": "inlet",
+  "flat_init": true
+ },
+ "enable_profile_memory_flushing": false
+}

@@ -1,0 +1,30 @@
+{
+ "reporting_interval": 1,
+ "profile_update_interval": 1,
+ "transient_controls": {
+  "type": "Fixed",
+  "method": "User-Specified",
+  "time_step_count": 1000,
+  "time_step_size": 0.005,
+  "max_iter_per_time_step": 20,
+  "flow_time": 9.000000000000007,
+  "extrapolate_variables": false,
+  "predict_next": false,
+  "rotating_mesh_flow_predictor": true,
+  "mp_specific_time_stepping": {
+   "enabled": false
+  },
+  "fixed_periodic": {
+   "enabled": false
+  },
+  "multiphase_specific_time_constraints": {
+   "moving_mesh_cfl_constraint": {
+    "moving_mesh_constraint": false
+   },
+   "physics_based_constraint": false
+  }
+ },
+ "data_sampling": {
+  "enabled": false
+ }
+}

@@ -1,0 +1,90 @@
+{
+ "p_v_coupling": {
+  "flow_scheme": "SIMPLE"
+ },
+ "spatial_discretization": {
+  "gradient_scheme": "least-square-cell-based",
+  "discretization_scheme": {
+   "k": "second-order-upwind",
+   "mom": "second-order-upwind",
+   "mp": "compressive",
+   "omega": "second-order-upwind",
+   "pressure": "presto!"
+  }
+ },
+ "transient_formulation": "unsteady-1st-order",
+ "expert": {
+  "implicit_bodyforce_treatment": true,
+  "disable_rhie_chow_flux": false,
+  "presto_pressure_scheme": false,
+  "first_to_second_order_blending": 1.0
+ },
+ "high_order_term_relaxation": {
+  "enable": false,
+  "relaxation_factor": 0.75,
+  "select_variables": "flow-variables",
+  "type": "standard"
+ },
+ "multiphase_numerics": {
+  "compressible_flow": {
+   "enhanced_numerics": true,
+   "alternate_bc_formulation": false
+  },
+  "viscous_flow": {
+   "viscosity_averaging": false
+  },
+  "heat_mass_transfer": {
+   "cavitation": {
+    "schnerr_evap_coeff": 1.0,
+    "schnerr_cond_coeff": 0.2,
+    "max_vapor_pressure_ratio": 5.0,
+    "min_vapor_pressure": 1,
+    "display_clipped_pressure": true,
+    "p_limit_method": "local-pvap-min",
+    "turbulent_diffusion": true
+   },
+   "area_density": {
+    "vof_min_seeding": 1e-06,
+    "ia_grad_sym": false
+   }
+  },
+  "advanced_stability_controls": {
+   "p_v_coupling": {
+    "rhie_chow_flux": {
+     "low_order_rhie_chow": false
+    }
+   },
+   "equation_order": {
+    "solve_flow_last": false
+   }
+  },
+  "default_controls": {
+   "recommended_defaults_for_existing_cases": false,
+   "revert_to_pre_r20_1_default_settings": {
+    "old_default_of_operating_density_method": false,
+    "old_default_of_volume_fraction_smoothing": false,
+    "old_variant_of_presto_for_cases_using_structured_mesh": false
+   }
+  },
+  "solution_stabilization": {
+   "execute_settings_optimization": false,
+   "execute_advanced_stabilization": false,
+   "velocity_limiting_treatment": {
+    "enable_velocity_limiting": false
+   }
+  }
+ },
+ "nita": false,
+ "overset": {
+  "high_order_pressure": false,
+  "interpolation_method": "least-squares",
+  "orphan_cell_treatment": true
+ },
+ "vof_numerics": {
+  "high_order_rc": false,
+  "high_order_rc_hybrid_treatment": false,
+  "force_treatment_of_unsteady_rc": false,
+  "unstructured_var_presto_scheme": true,
+  "new_framework_for_vof_specific_node_based_treatment": false
+ }
+}

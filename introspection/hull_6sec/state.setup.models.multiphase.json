@@ -1,0 +1,45 @@
+{
+ "model": "vof",
+ "hybrid_models": {},
+ "number_of_phases": {
+  "number_of_eulerian_phases": 2
+ },
+ "vof_sub_models": {
+  "open_channel_flow": true,
+  "open_channel_flow_wave_bc": false
+ },
+ "vof_parameters": {
+  "vof_formulation": "implicit",
+  "vof_cutoff": 1e-06,
+  "interface_modeling_options": {
+   "interface_type": "sharp",
+   "anti_diffusion": false
+  }
+ },
+ "advanced_formulation": {
+  "implicit_body_force": true
+ },
+ "phases": {
+  "phase-1": {
+   "name": "phase-1",
+   "material": "air"
+  },
+  "phase-2": {
+   "name": "phase-2",
+   "material": "water-liquid"
+  }
+ },
+ "phase_interaction": {
+  "forces": {
+   "surface_tension": {
+    "phase-1": {
+     "phase-2": {
+      "option": "none"
+     }
+    }
+   },
+   "surface_tension_model": false
+  },
+  "mass_transfer_list": []
+ }
+}

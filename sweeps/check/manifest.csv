@@ -1,0 +1,5 @@
+index,case_id,speed_mps,theta_deg,z_m,dt_s,steps,end_time_s
+0,at2_trimaran_halfd_V2p50_t+0p00_z+0p0mm,2.5,0.0,0.0,0.005,979,4.89
+1,at2_trimaran_halfd_V2p50_t+0p00_z-20p0mm,2.5,0.0,-0.02,0.005,979,4.89
+2,at2_trimaran_halfd_V2p50_t+3p00_z+0p0mm,2.5,3.0,0.0,0.005,979,4.89
+3,at2_trimaran_halfd_V2p50_t+3p00_z-20p0mm,2.5,3.0,-0.02,0.005,979,4.89

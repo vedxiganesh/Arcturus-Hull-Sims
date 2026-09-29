@@ -1,0 +1,101 @@
+{
+ "under_relaxation": {
+  "body-force": 1.0,
+  "density": 1,
+  "k": 0.8,
+  "mom": 0.7,
+  "mp": 0.5,
+  "omega": 0.8,
+  "pressure": 0.3,
+  "turb-viscosity": 1
+ },
+ "equations": {
+  "flow": true,
+  "kw": true,
+  "mp": true
+ },
+ "limits": {
+  "min_pressure": 1,
+  "max_pressure": 50000000000.0,
+  "min_tke": 1e-14,
+  "min_omega": 1e-20,
+  "max_turb_visc_ratio": 100000.0
+ },
+ "advanced": {
+  "multi_grid": {
+   "mg_controls": {
+    "k": {
+     "cycle_type": "flexible-cycle",
+     "termination_criteria": 0.1,
+     "residual_reduction_tolerance": 0.7
+    },
+    "mp": {
+     "cycle_type": "flexible-cycle",
+     "termination_criteria": 0.1,
+     "residual_reduction_tolerance": 0.7
+    },
+    "omega": {
+     "cycle_type": "flexible-cycle",
+     "termination_criteria": 0.1,
+     "residual_reduction_tolerance": 0.7
+    },
+    "pressure": {
+     "cycle_type": "v-cycle",
+     "termination_criteria": 0.1,
+     "stabilization": "none"
+    },
+    "x-mom": {
+     "cycle_type": "flexible-cycle",
+     "termination_criteria": 0.1,
+     "residual_reduction_tolerance": 0.7
+    },
+    "y-mom": {
+     "cycle_type": "flexible-cycle",
+     "termination_criteria": 0.1,
+     "residual_reduction_tolerance": 0.7
+    },
+    "z-mom": {
+     "cycle_type": "flexible-cycle",
+     "termination_criteria": 0.1,
+     "residual_reduction_tolerance": 0.7
+    }
+   },
+   "amg_controls": {
+    "scalar_parameters": {
+     "fixed_cycle_parameters": {
+      "pre_sweeps": 0,
+      "post_sweeps": 1,
+      "max_cycle": 30
+     },
+     "coarsening_parameters": {
+      "max_coarse_levels": 40,
+      "coarsen_by_interval": 2,
+      "conservative_coarsening": true,
+      "aggressive_coarsening": false
+     },
+     "smoother_type": "Gauss-Seidel"
+    },
+    "flexible_cycle_parameters": {
+     "sweeps": 2,
+     "max_fine_relaxations": 30,
+     "max_coarse_relaxations": 50
+    },
+    "options": {
+     "verbosity": 0
+    }
+   }
+  },
+  "expert": {
+   "spatial_discretization_limiter": {
+    "limiter_type": "default",
+    "cell_to_limiting": "cell-to-face",
+    "limiter_filter": false
+   },
+   "linearized_mass_transfer_udf": true,
+   "save_cell_residuals": false,
+   "keep_temporary_memory": false,
+   "allow_all_disc_schemes": false
+  },
+  "relaxation_method": "gauss-seidel"
+ }
+}

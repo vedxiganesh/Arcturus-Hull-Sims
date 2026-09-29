@@ -1,0 +1,13 @@
+{
+ "area": 1,
+ "density": 1.225,
+ "enthalpy": 0,
+ "length": 1,
+ "pressure": 0,
+ "temperature": 288.16,
+ "yplus": 300,
+ "velocity": 1,
+ "viscosity": 1.7894e-05,
+ "ratio_of_specific_heats": 1.4,
+ "zone": "background_mesh"
+}

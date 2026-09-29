@@ -1,0 +1,726 @@
+{
+ "solver": {
+  "type": "pressure-based",
+  "time": "unsteady-1st-order"
+ },
+ "operating_conditions": {
+  "gravity": {
+   "enable": true,
+   "components": [
+    0,
+    0,
+    -9.81
+   ],
+   "gravity_mrf_behavior": true
+  },
+  "operating_pressure": 101325,
+  "reference_pressure_location": [
+   0,
+   0,
+   0
+  ],
+  "reference_pressure_method": "Connected and disconnected fluid zones",
+  "operating_density": {
+   "method": "minimum-phase-averaged"
+  }
+ },
+ "units_settings": {
+  "units": {
+   "acceleration": {
+    "unit_name": "m/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "angle": {
+    "unit_name": "deg",
+    "scale_factor": 0.0174532925,
+    "offset": 0.0
+   },
+   "angular-velocity": {
+    "unit_name": "rad/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "area": {
+    "unit_name": "m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "area-inverse": {
+    "unit_name": "m^-2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "area-per-time": {
+    "unit_name": "m^2/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "area-temperature": {
+    "unit_name": "m^2 K",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "collision-rate": {
+    "unit_name": "m^-3 s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "concentration": {
+    "unit_name": "kmol/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "contact-resistance": {
+    "unit_name": "(m^2 K)/W",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "contact-resistance-vol": {
+    "unit_name": "Ohm m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "crank-angle": {
+    "unit_name": "deg",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "crank-angular-velocity": {
+    "unit_name": "rev/min",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "current": {
+    "unit_name": "A",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "current-density": {
+    "unit_name": "A/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "current-vol-density": {
+    "unit_name": "A/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "density": {
+    "unit_name": "kg/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "density*specific-energy": {
+    "unit_name": "J/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "density*specific-heat": {
+    "unit_name": "J/(m^3 K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "density*velocity": {
+    "unit_name": "kg/(m^2 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "density-gradient": {
+    "unit_name": "kg/m^4",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "density-inverse": {
+    "unit_name": "m^3/kg",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "depth": {
+    "unit_name": "m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-capacity": {
+    "unit_name": "Ah",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-charge": {
+    "unit_name": "A h",
+    "scale_factor": 3600.0,
+    "offset": 0.0
+   },
+   "elec-charge-density": {
+    "unit_name": "(A s)/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-charge-flux-density": {
+    "unit_name": "Ah/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-concentration": {
+    "unit_name": "mol/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-conductivity": {
+    "unit_name": "S/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-contact-resistance": {
+    "unit_name": "Ohm m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-field": {
+    "unit_name": "V/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-permittivity": {
+    "unit_name": "farad/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-resistance": {
+    "unit_name": "Ohm",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "elec-resistivity": {
+    "unit_name": "Ohm m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "energy": {
+    "unit_name": "J",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "energy-density": {
+    "unit_name": "J/m2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "force": {
+    "unit_name": "N",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "force*time-per-volume": {
+    "unit_name": "(N s)/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "force-per-area": {
+    "unit_name": "N/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "force-per-volume": {
+    "unit_name": "N/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "frequency": {
+    "unit_name": "Hz",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "gas-constant": {
+    "unit_name": "J/(kg K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "heat-flux": {
+    "unit_name": "W/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "heat-flux-resolved": {
+    "unit_name": "(m K)/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "heat-generation-rate": {
+    "unit_name": "W/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "heat-transfer-coefficient": {
+    "unit_name": "W/(m^2 K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "ignition-energy": {
+    "unit_name": "J/mol",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "kinematic-viscosity": {
+    "unit_name": "m^2/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "length": {
+    "unit_name": "m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "length-inverse": {
+    "unit_name": "m^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "length-temperature": {
+    "unit_name": "m K",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "length-time-inverse": {
+    "unit_name": "m^-1 s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "length4-per-time": {
+    "unit_name": "m^4/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mag-permeability": {
+    "unit_name": "H/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass": {
+    "unit_name": "kg",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass-diffusivity": {
+    "unit_name": "m^2/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass-flow": {
+    "unit_name": "kg/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass-flow-per-depth": {
+    "unit_name": "kg/(m s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass-flow-per-time": {
+    "unit_name": "kg/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass-flux": {
+    "unit_name": "kg/(m^2 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mass-transfer-rate": {
+    "unit_name": "kg/(m^3 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mole-con-henry-const": {
+    "unit_name": "(Pa m^3)/kgmol",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mole-specific-energy": {
+    "unit_name": "J/kgmol",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mole-specific-entropy": {
+    "unit_name": "J/(kgmol K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "mole-transfer-rate": {
+    "unit_name": "kgmol/(m^3 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "molec-wt": {
+    "unit_name": "kg/kmol",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "moment": {
+    "unit_name": "N m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "moment-of-inertia": {
+    "unit_name": "kg m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "no-unit": {
+    "unit_name": "",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "nucleation-rate": {
+    "unit_name": "m^-3 s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "number-density": {
+    "unit_name": "m^-3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "particles-conc": {
+    "unit_name": "1.e15-particles/kg",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "particles-rate": {
+    "unit_name": "1.e15 m^-3 s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "percentage": {
+    "unit_name": "%",
+    "scale_factor": 0.01,
+    "offset": 0.0
+   },
+   "power": {
+    "unit_name": "W",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "power-per-time": {
+    "unit_name": "W/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "pressure": {
+    "unit_name": "Pa",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "pressure-2nd-time-derivative": {
+    "unit_name": "Pa/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "pressure-gradient": {
+    "unit_name": "Pa/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "pressure-time-deriv-sqr": {
+    "unit_name": "Pa^2/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "pressure-time-derivative": {
+    "unit_name": "Pa/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "resistance": {
+    "unit_name": "m^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "site-density": {
+    "unit_name": "kgmol/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-formation-constant-unit": {
+    "unit_name": "kg/(N m s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-limiting-nuclei-rate": {
+    "unit_name": "1e+15-particles/m3-s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-linear-termination": {
+    "unit_name": "m^3/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-oxidation-constant": {
+    "unit_name": "kg m kgmol^-1 K^-0.5 s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-pre-exponential-constant": {
+    "unit_name": "1.e15 kg^-1 s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-sitespecies-concentration": {
+    "unit_name": "kmol/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "soot-surface-growth-scale-factor": {
+    "unit_name": "(kg m)/(kgmol s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-elliptic-relaxation-function": {
+    "unit_name": "kg/(m^3 s^2)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-energy": {
+    "unit_name": "W/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-kinetic-energy": {
+    "unit_name": "kg/(m s^3)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-mass": {
+    "unit_name": "kg/(m^3 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-momentum": {
+    "unit_name": "N/m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-specific-dissipation-rate": {
+    "unit_name": "kg/(m^3 s^2)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-temperature-variance": {
+    "unit_name": "K^2/(m^3 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-turbulent-dissipation-rate": {
+    "unit_name": "kg/(m s^4)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "source-turbulent-viscosity": {
+    "unit_name": "kg/(m s^2)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "specific-area": {
+    "unit_name": "m^2/kg",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "specific-energy": {
+    "unit_name": "J/kg",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "specific-heat": {
+    "unit_name": "J/(kg K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "spring-constant": {
+    "unit_name": "N/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "spring-constant-angular": {
+    "unit_name": "(N m)/rad",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "stefan-boltzmann-constant": {
+    "unit_name": "W/(m^2 K^4)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "surface-density": {
+    "unit_name": "kg/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "surface-mole-transfer-rate": {
+    "unit_name": "kgmol/(m^2 s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "surface-tension": {
+    "unit_name": "N/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "surface-tension-gradient": {
+    "unit_name": "N/(m K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "temperature": {
+    "unit_name": "K",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "temperature-difference": {
+    "unit_name": "K",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "temperature-gradient": {
+    "unit_name": "K/m",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "temperature-inverse": {
+    "unit_name": "K^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "temperature-variance": {
+    "unit_name": "K^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "thermal-conductivity": {
+    "unit_name": "W/(m K)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "thermal-resistance": {
+    "unit_name": "(m^2 K)/W",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "thermal-resistivity": {
+    "unit_name": "(m K)/W",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "thermophoretic-diffusivity": {
+    "unit_name": "(kg m^2)/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "time": {
+    "unit_name": "s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "time-inverse": {
+    "unit_name": "s^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "time-inverse-cubed": {
+    "unit_name": "s^-3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "time-inverse-squared": {
+    "unit_name": "s^-2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "turb-kinetic-energy-production": {
+    "unit_name": "kg/(m s^3)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "turbulent-energy-diss-rate": {
+    "unit_name": "m^2/s^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "turbulent-energy-diss-rate-gradient": {
+    "unit_name": "m/s^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "turbulent-kinetic-energy": {
+    "unit_name": "m^2/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "turbulent-kinetic-energy-gradient": {
+    "unit_name": "m/s^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "univ-gas-constant": {
+    "unit_name": "J/(K kgmol)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "velocity": {
+    "unit_name": "m/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "viscosity": {
+    "unit_name": "kg/(m s)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "viscosity-consistency-index": {
+    "unit_name": "kg s^n-2 m^-1",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "voltage": {
+    "unit_name": "V",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "volume": {
+    "unit_name": "m^3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "volume-flow-rate": {
+    "unit_name": "m^3/s",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "volume-flow-rate-per-depth": {
+    "unit_name": "m^3/(s m)",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "volume-inverse": {
+    "unit_name": "m^-3",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "volume-temperature": {
+    "unit_name": "m^3/K",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "wave-length": {
+    "unit_name": "Angstrom",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   },
+   "youngs-modulus": {
+    "unit_name": "N/m^2",
+    "scale_factor": 1.0,
+    "offset": 0.0
+   }
+  }
+ }
+}

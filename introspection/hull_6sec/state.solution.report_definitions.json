@@ -1,0 +1,70 @@
+{
+ "mesh": {},
+ "surface": {},
+ "volume": {},
+ "force": {
+  "report-lift-total": {
+   "name": "report-lift-total",
+   "force_vector": [
+    0.0,
+    0.0,
+    1.0
+   ],
+   "reference_frame": "global",
+   "zones": [
+    "wall_amas",
+    "wall_mainhull"
+   ],
+   "per_selection": false,
+   "average_over": 1,
+   "retain_instantaneous_values": false,
+   "output_parameter": true,
+   "create_report_file": true,
+   "create_report_plot": true
+  },
+  "report-total-drag": {
+   "name": "report-total-drag",
+   "force_vector": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "reference_frame": "global",
+   "zones": [
+    "wall_amas",
+    "wall_mainhull"
+   ],
+   "per_selection": false,
+   "average_over": 1,
+   "retain_instantaneous_values": false,
+   "output_parameter": true,
+   "create_report_file": true,
+   "create_report_plot": true
+  }
+ },
+ "lift": {},
+ "drag": {},
+ "moment": {},
+ "time": {
+  "delta-time": {
+   "output_parameter": false,
+   "create_report_file": false,
+   "create_report_plot": false
+  },
+  "flow-time": {
+   "output_parameter": false,
+   "create_report_file": true,
+   "create_report_plot": false
+  },
+  "iters-per-timestep": {
+   "output_parameter": false,
+   "create_report_file": false,
+   "create_report_plot": false
+  }
+ },
+ "flux": {},
+ "vbm": {},
+ "user_defined": {},
+ "expression": {},
+ "single_valued_expression": {}
+}

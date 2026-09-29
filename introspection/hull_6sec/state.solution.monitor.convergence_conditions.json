@@ -1,0 +1,37 @@
+{
+ "convergence_reports": {
+  "report-convergence-drag": {
+   "name": "report-convergence-drag",
+   "previous_values_to_consider": 1,
+   "initial_values_to_ignore": 0,
+   "iteration_at_creation_or_edit": 0,
+   "stop_criterion": 0.001,
+   "report_defs": "report-total-drag",
+   "print": false,
+   "active": true,
+   "x_label": "flow-time",
+   "previous_values": [
+    51.31416466494752,
+    51.34041313138323
+   ]
+  },
+  "report-convergence-lift": {
+   "name": "report-convergence-lift",
+   "previous_values_to_consider": 1,
+   "initial_values_to_ignore": 0,
+   "iteration_at_creation_or_edit": 0,
+   "stop_criterion": 0.001,
+   "report_defs": "report-lift-total",
+   "print": false,
+   "active": true,
+   "x_label": "flow-time",
+   "previous_values": [
+    346.012642116668,
+    345.7888825508443
+   ]
+  }
+ },
+ "frequency": 1,
+ "condition": "all-conditions-are-met",
+ "check_for": "time-step-convergence"
+}

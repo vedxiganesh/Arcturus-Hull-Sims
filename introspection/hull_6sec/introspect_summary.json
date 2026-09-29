@@ -1,0 +1,419 @@
+{
+ "pyfluent": "0.40.1",
+ "fluent_version": "Ansys Fluent 2025 R2",
+ "read_seconds": 105.0,
+ "children": {
+  "<root>": {
+   "child_names": [
+    "file",
+    "mesh",
+    "server",
+    "setup",
+    "solution",
+    "results",
+    "design",
+    "parametric_studies",
+    "current_parametric_study",
+    "parameters",
+    "parallel",
+    "transient_post_processing"
+   ],
+   "command_names": [
+    "switch_to_meshing_mode"
+   ],
+   "query_names": []
+  },
+  "setup": {
+   "child_names": [
+    "general",
+    "models",
+    "materials",
+    "cell_zone_conditions",
+    "model_topology",
+    "physics",
+    "boundary_conditions",
+    "mesh_interfaces",
+    "dynamic_mesh",
+    "reference_values",
+    "reference_frames",
+    "named_expressions",
+    "turbo_models",
+    "user_defined",
+    "profiles"
+   ],
+   "command_names": [],
+   "query_names": []
+  },
+  "mesh": {
+   "child_names": [
+    "adapt",
+    "geometry",
+    "anisotropic_adaption",
+    "check_before_solve",
+    "check_verbosity",
+    "enhanced_orthogonal_quality",
+    "matching_tolerance",
+    "modify_zones",
+    "show_periodic_shadow_zones",
+    "reorder",
+    "repair_improve",
+    "surface_mesh",
+    "polyhedra",
+    "wall_distance_method"
+   ],
+   "command_names": [
+    "adjacency",
+    "check",
+    "memory_usage",
+    "mesh_info",
+    "quality",
+    "rotate",
+    "scale",
+    "size_info",
+    "redistribute_boundary_layer",
+    "swap_mesh_faces",
+    "smooth_mesh",
+    "replace",
+    "translate"
+   ],
+   "query_names": []
+  },
+  "mesh.modify_zones": {
+   "child_names": [],
+   "command_names": [
+    "deactivate_cell_zone",
+    "delete_cell_zone",
+    "copy_move_cell_zone",
+    "copy_cell_zones_by_offsets",
+    "copy_cell_zones_by_delta",
+    "list_zones",
+    "extrude_face_zone_delta",
+    "extrude_face_zone_para",
+    "fuse_face_zones",
+    "scale_zone",
+    "rotate_zone",
+    "translate_zone",
+    "merge_zones",
+    "replace_zone",
+    "append_mesh",
+    "append_mesh_data",
+    "sep_cell_zone_mark",
+    "sep_cell_zone_region",
+    "sep_face_zone_angle",
+    "sep_face_zone_face",
+    "sep_face_zone_mark",
+    "sep_face_zone_region",
+    "zone_name",
+    "change_zone_state",
+    "make_periodic",
+    "create_periodic_interface",
+    "slit_periodic",
+    "zone_type",
+    "del_cell_by_id",
+    "del_cell_by_mark",
+    "disconnect_cell_zones",
+    "project_face_zones"
+   ],
+   "query_names": []
+  },
+  "setup.dynamic_mesh": {
+   "child_names": [
+    "enabled",
+    "methods",
+    "options",
+    "dynamic_zones"
+   ],
+   "command_names": [
+    "mesh_motion"
+   ],
+   "query_names": []
+  },
+  "setup.overset_interfaces": {
+   "error": "AttributeError(\"'setup' object has no attribute 'overset_interfaces'.\\nThe most similar names are: mesh_interfaces\")"
+  },
+  "setup.boundary_conditions": {
+   "child_names": [
+    "axis",
+    "degassing",
+    "exhaust_fan",
+    "fan",
+    "geometry",
+    "inlet_vent",
+    "intake_fan",
+    "interface",
+    "interior",
+    "mass_flow_inlet",
+    "mass_flow_outlet",
+    "network",
+    "network_end",
+    "outflow",
+    "outlet_vent",
+    "overset",
+    "periodic",
+    "porous_jump",
+    "pressure_far_field",
+    "pressure_inlet",
+    "pressure_outlet",
+    "radiator",
+    "rans_les_interface",
+    "recirculation_inlet",
+    "recirculation_outlet",
+    "shadow",
+    "symmetry",
+    "velocity_inlet",
+    "wall",
+    "non_reflecting_bc",
+    "perforated_wall",
+    "settings"
+   ],
+   "command_names": [
+    "copy",
+    "set_zone_type",
+    "slit_face_zone",
+    "non_overlapping_zone_name",
+    "slit_interior_between_diff_materials",
+    "create_all_shell_threads",
+    "recreate_all_shells",
+    "delete_all_shells",
+    "orient_face_zone",
+    "knudsen_number_calculator",
+    "add_suffix_or_prefix",
+    "rename_by_adjacency",
+    "rename_to_default"
+   ],
+   "query_names": []
+  },
+  "solution.report_definitions": {
+   "child_names": [
+    "mesh",
+    "surface",
+    "volume",
+    "force",
+    "lift",
+    "drag",
+    "moment",
+    "time",
+    "flux",
+    "vbm",
+    "injection",
+    "user_defined",
+    "aeromechanics",
+    "icing",
+    "expression",
+    "single_valued_expression",
+    "custom"
+   ],
+   "command_names": [
+    "compute",
+    "copy",
+    "delete_all"
+   ],
+   "query_names": []
+  },
+  "solution.initialization": {
+   "child_names": [
+    "initialization_type",
+    "reference_frame",
+    "defaults",
+    "localized_turb_init",
+    "hybrid_init_options",
+    "patch",
+    "open_channel_auto_init",
+    "fmg",
+    "enable_profile_memory_flushing"
+   ],
+   "command_names": [
+    "initialize",
+    "compute_defaults",
+    "standard_initialize",
+    "hybrid_initialize",
+    "list_defaults",
+    "init_turb_vel_fluctuations",
+    "init_flow_statistics",
+    "show_iterations_sampled",
+    "show_time_sampled",
+    "dpm_reset",
+    "lwf_reset",
+    "init_lwf",
+    "init_acoustics_options",
+    "levelset_auto_init"
+   ],
+   "query_names": []
+  },
+  "file": {
+   "child_names": [
+    "single_precision_coordinates",
+    "binary_legacy_files",
+    "cff_files",
+    "auto_merge_zones",
+    "convert_hanging_nodes_during_read",
+    "async_optimize",
+    "write_pdat",
+    "auto_save",
+    "export",
+    "import_",
+    "parametric_project",
+    "cffio_options",
+    "batch_options",
+    "interpolate",
+    "table_file_manager"
+   ],
+   "command_names": [
+    "define_macro",
+    "execute_macro",
+    "read_macros",
+    "read",
+    "read_case",
+    "read_case_data",
+    "read_case_lightweight",
+    "read_data",
+    "read_mesh",
+    "read_surface_mesh",
+    "read_journal",
+    "start_journal",
+    "start_python_journal",
+    "stop_journal",
+    "replace_mesh",
+    "write",
+    "write_case",
+    "write_data",
+    "write_case_data",
+    "read_settings",
+    "read_field_functions",
+    "read_injections",
+    "read_profile",
+    "read_pdf",
+    "read_isat_table",
+    "show_configuration",
+    "stop_macro",
+    "start_transcript",
+    "stop_transcript",
+    "data_file_options",
+    "beta_settings"
+   ],
+   "query_names": []
+  }
+ },
+ "state_ok": [
+  "setup.general",
+  "setup.models.multiphase",
+  "setup.models.viscous",
+  "setup.materials",
+  "setup.cell_zone_conditions",
+  "setup.boundary_conditions",
+  "setup.dynamic_mesh",
+  "setup.reference_values",
+  "setup.named_expressions",
+  "solution.methods",
+  "solution.controls",
+  "solution.report_definitions",
+  "solution.monitor.report_files",
+  "solution.monitor.convergence_conditions",
+  "solution.initialization",
+  "solution.run_calculation",
+  "solution.calculation_activity"
+ ],
+ "surfaces": {
+  "waterline": {
+   "surface_id": "[10]",
+   "zone_id": "-1",
+   "zone_type": "",
+   "type": "plane-surf"
+  },
+  "wall_amas-shadow": {
+   "surface_id": "[9]",
+   "zone_id": "1",
+   "zone_type": "wall",
+   "type": "zone-surf"
+  },
+  "overset": {
+   "surface_id": "[8]",
+   "zone_id": "591",
+   "zone_type": "overset",
+   "type": "zone-surf"
+  },
+  "wall_amas": {
+   "surface_id": "[7]",
+   "zone_id": "593",
+   "zone_type": "wall",
+   "type": "zone-surf"
+  },
+  "symmetry_centerline_foreground": {
+   "surface_id": "[6]",
+   "zone_id": "594",
+   "zone_type": "symmetry",
+   "type": "zone-surf"
+  },
+  "wall_mainhull": {
+   "surface_id": "[5]",
+   "zone_id": "592",
+   "zone_type": "wall",
+   "type": "zone-surf"
+  },
+  "symmetry_top_bottom": {
+   "surface_id": "[4]",
+   "zone_id": "40",
+   "zone_type": "symmetry",
+   "type": "zone-surf"
+  },
+  "symmetry_center": {
+   "surface_id": "[3]",
+   "zone_id": "39",
+   "zone_type": "symmetry",
+   "type": "zone-surf"
+  },
+  "symmetry_outer": {
+   "surface_id": "[2]",
+   "zone_id": "38",
+   "zone_type": "symmetry",
+   "type": "zone-surf"
+  },
+  "outlet": {
+   "surface_id": "[1]",
+   "zone_id": "37",
+   "zone_type": "pressure-outlet",
+   "type": "zone-surf"
+  },
+  "inlet": {
+   "surface_id": "[0]",
+   "zone_id": "36",
+   "zone_type": "pressure-inlet",
+   "type": "zone-surf"
+  }
+ },
+ "bboxes": {
+  "waterline": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "wall_amas-shadow": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "overset": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "wall_amas": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "symmetry_centerline_foreground": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "wall_mainhull": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "symmetry_top_bottom": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "symmetry_center": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "symmetry_outer": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "outlet": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  },
+  "inlet": {
+   "error": "AttributeError(\"'dict' object has no attribute 'vertices'\")"
+  }
+ }
+}

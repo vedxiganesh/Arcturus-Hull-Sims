@@ -1,0 +1,272 @@
+{
+ "fluid": {
+  "background_mesh": {
+   "name": "background_mesh",
+   "phase": {
+    "mixture": {
+     "general": {
+      "laminar": false
+     },
+     "reference_frame": {
+      "frame_motion": false,
+      "reference_frame_axis_origin": [
+       {
+        "option": "value",
+        "value": 0.0
+       },
+       {
+        "option": "value",
+        "value": 0.0
+       },
+       {
+        "option": "value",
+        "value": 0.0
+       }
+      ],
+      "reference_frame_axis_direction": [
+       {
+        "option": "value",
+        "value": 0
+       },
+       {
+        "option": "value",
+        "value": 0
+       },
+       {
+        "option": "value",
+        "value": 1
+       }
+      ]
+     },
+     "mesh_motion": {
+      "enable": false
+     },
+     "porous_zone": {
+      "porous": false
+     },
+     "fan_zone": {
+      "fan_zone": false
+     },
+     "embedded_les": {
+      "les_zone": false
+     },
+     "sources": {
+      "enable": false
+     },
+     "fixed_values": {
+      "enable": false
+     },
+     "multiphase": {
+      "numerical_beach": false
+     }
+    },
+    "phase-1": {
+     "general": {},
+     "reference_frame": {},
+     "mesh_motion": {},
+     "porous_zone": {},
+     "fan_zone": {
+      "fan_zone": false
+     },
+     "embedded_les": {
+      "les_zone": false
+     },
+     "sources": {
+      "enable": false
+     },
+     "fixed_values": {
+      "enable": false
+     },
+     "multiphase": {}
+    },
+    "phase-2": {
+     "general": {},
+     "reference_frame": {},
+     "mesh_motion": {},
+     "porous_zone": {},
+     "fan_zone": {
+      "fan_zone": false
+     },
+     "embedded_les": {
+      "les_zone": false
+     },
+     "sources": {
+      "enable": false
+     },
+     "fixed_values": {
+      "enable": false
+     },
+     "multiphase": {}
+    }
+   }
+  },
+  "foreground_component_mesh": {
+   "name": "foreground_component_mesh",
+   "phase": {
+    "mixture": {
+     "general": {
+      "laminar": false
+     },
+     "reference_frame": {
+      "frame_motion": false,
+      "reference_frame_axis_origin": [
+       {
+        "option": "value",
+        "value": 0.0
+       },
+       {
+        "option": "value",
+        "value": 0.0
+       },
+       {
+        "option": "value",
+        "value": 0.0
+       }
+      ],
+      "reference_frame_axis_direction": [
+       {
+        "option": "value",
+        "value": 0
+       },
+       {
+        "option": "value",
+        "value": 0
+       },
+       {
+        "option": "value",
+        "value": 1
+       }
+      ]
+     },
+     "mesh_motion": {
+      "enable": false
+     },
+     "porous_zone": {
+      "porous": false
+     },
+     "fan_zone": {
+      "fan_zone": false
+     },
+     "embedded_les": {
+      "les_zone": false
+     },
+     "sources": {
+      "enable": false
+     },
+     "fixed_values": {
+      "enable": false
+     },
+     "multiphase": {
+      "numerical_beach": false
+     }
+    },
+    "phase-1": {
+     "general": {},
+     "reference_frame": {},
+     "mesh_motion": {},
+     "porous_zone": {},
+     "fan_zone": {
+      "fan_zone": false
+     },
+     "embedded_les": {
+      "les_zone": false
+     },
+     "sources": {
+      "enable": false
+     },
+     "fixed_values": {
+      "enable": false
+     },
+     "multiphase": {}
+    },
+    "phase-2": {
+     "general": {},
+     "reference_frame": {},
+     "mesh_motion": {},
+     "porous_zone": {},
+     "fan_zone": {
+      "fan_zone": false
+     },
+     "embedded_les": {
+      "les_zone": false
+     },
+     "sources": {
+      "enable": false
+     },
+     "fixed_values": {
+      "enable": false
+     },
+     "multiphase": {}
+    }
+   }
+  }
+ },
+ "solid": {
+  "fluid:1": {
+   "name": "fluid:1",
+   "phase": {
+    "mixture": {
+     "general": {
+      "material": "aluminum"
+     },
+     "reference_frame": {
+      "frame_motion": false,
+      "reference_frame_axis_origin": [
+       {
+        "option": "value",
+        "value": 0.0
+       },
+       {
+        "option": "value",
+        "value": 0.0
+       },
+       {
+        "option": "value",
+        "value": 0.0
+       }
+      ],
+      "reference_frame_axis_direction": [
+       {
+        "option": "value",
+        "value": 0
+       },
+       {
+        "option": "value",
+        "value": 0
+       },
+       {
+        "option": "value",
+        "value": 1
+       }
+      ]
+     },
+     "mesh_motion": {
+      "enable": false
+     },
+     "solid_motion": {
+      "enable": false
+     },
+     "sources": {},
+     "fixed_values": {},
+     "material_orientation": {}
+    },
+    "phase-1": {
+     "general": {},
+     "mesh_motion": {},
+     "solid_motion": {},
+     "sources": {},
+     "fixed_values": {},
+     "material_orientation": {}
+    },
+    "phase-2": {
+     "general": {},
+     "mesh_motion": {},
+     "solid_motion": {},
+     "sources": {},
+     "fixed_values": {},
+     "material_orientation": {}
+    }
+   }
+  }
+ }
+}

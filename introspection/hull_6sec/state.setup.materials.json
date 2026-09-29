@@ -1,0 +1,41 @@
+{
+ "database": {
+  "database_type": "fluent-database"
+ },
+ "fluid": {
+  "air": {
+   "name": "air",
+   "chemical_formula": "",
+   "density": {
+    "option": "value",
+    "value": 1.225
+   },
+   "viscosity": {
+    "option": "value",
+    "value": 1.7894e-05
+   }
+  },
+  "water-liquid": {
+   "name": "water-liquid",
+   "chemical_formula": "h2o<l>",
+   "density": {
+    "option": "value",
+    "value": 998.2
+   },
+   "viscosity": {
+    "option": "value",
+    "value": 0.001003
+   }
+  }
+ },
+ "solid": {
+  "aluminum": {
+   "name": "aluminum",
+   "chemical_formula": "al",
+   "density": {
+    "option": "value",
+    "value": 2719
+   }
+  }
+ }
+}

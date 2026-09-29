@@ -1,0 +1,35 @@
+{
+ "model": "k-omega",
+ "k_omega_model": "sst",
+ "k_omega": {
+  "k_omega_low_re_correction": false
+ },
+ "near_wall_treatment": {
+  "wall_omega_treatment": "correlation"
+ },
+ "transition_module": "none",
+ "hybrid_rans_les": "none",
+ "options": {
+  "curvature_correction": {
+   "enabled": false
+  },
+  "corner_flow_correction": {
+   "enabled": false
+  },
+  "production_kato_launder_enabled": false,
+  "production_limiter": {
+   "enabled": true,
+   "clip_factor": 10.0
+  }
+ },
+ "turbulence_expert": {
+  "turbulence_damping": {
+   "enable_turb_damping": false
+  },
+  "turb_non_newtonian": false,
+  "restore_sst_v61": false
+ },
+ "user_defined_functions": {
+  "turb_visc": "none"
+ }
+}

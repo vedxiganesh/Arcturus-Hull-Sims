@@ -1,0 +1,14 @@
+#!/bin/bash -l
+# hullsweep CLI on the cluster: `~/hullsweep_code/bin/hs <command> ...`
+# (alias hs=~/hullsweep_code/bin/hs). Also the batch script of the
+# orchestrator job (`hs advance <study>`), hence the login shell for `module`.
+set -eo pipefail
+# Under sbatch the script runs from Slurm's spool copy, so fall back to the
+# standard code location when the copy has no hs.py beside it.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ -f "$HERE/hs.py" ] || HERE="$HOME/hullsweep_code"
+if [ -z "${CONDA_PREFIX:-}" ] || [ "$(basename "$CONDA_PREFIX")" != "pyfluent" ]; then
+    module load miniforge >/dev/null 2>&1
+    conda activate pyfluent
+fi
+exec python "$HERE/hs.py" "$@"

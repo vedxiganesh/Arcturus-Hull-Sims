@@ -1,0 +1,32 @@
+{
+ "report-lift-total-rfile": {
+  "name": "report-lift-total-rfile",
+  "file_name": ".\\\\report-lift-total-rfile_1_801.out",
+  "frequency_of": "time-step",
+  "frequency": 1,
+  "itr_index": "801",
+  "run_index": "1",
+  "report_defs": [
+   "report-lift-total",
+   "flow-time"
+  ],
+  "print": false,
+  "active": true,
+  "write_instantaneous_values": false
+ },
+ "report-total-drag-rfile": {
+  "name": "report-total-drag-rfile",
+  "file_name": ".\\\\report-total-drag-rfile_1_801.out",
+  "frequency_of": "time-step",
+  "frequency": 1,
+  "itr_index": "801",
+  "run_index": "1",
+  "report_defs": [
+   "report-total-drag",
+   "flow-time"
+  ],
+  "print": false,
+  "active": true,
+  "write_instantaneous_values": false
+ }
+}

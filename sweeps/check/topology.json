@@ -1,0 +1,84 @@
+{
+  "name": "at2_trimaran_halfd",
+  "description": "At2 trimaran, half domain (symmetry at x=0), single ama, coarse overset mesh.",
+  "_comment_template": "template_case must be at theta=0, z=0 with dynamic mesh OFF; built by `prepare_case.py template` from source_case. source_case is the fully set-up case saved BEFORE any motion (2026-09-12 01:05). Do not use Trimaran_HalfD_run_22643276/hull_6sec.cas.h5: its 6DOF CG had sunk to z=-0.605 m by t=6 s.",
+  "source_case": "../At2_Trimaran_Foreground_Labeled_Coarse.cas.h5",
+  "reference_mesh": "../At2_Trimaran_Foreground_Labeled_Coarse.msh.h5",
+  "template_case": "templates/at2_trimaran_halfd_template.cas.h5",
+  "half_domain": true,
+  "mass_full_kg": 35.0,
+  "g": 9.81,
+  "cg_ref": [
+    0.0,
+    -0.236,
+    -0.076
+  ],
+  "bow_direction": [
+    0.0,
+    -1.0,
+    0.0
+  ],
+  "up_direction": [
+    0.0,
+    0.0,
+    1.0
+  ],
+  "free_surface_z": -0.076,
+  "bottom_z": -1.69,
+  "_comment_zones": "fluid:1 is a SOLID (aluminum) zone inside the ama, behind the two-sided wall_amas. It must move with the foreground.",
+  "foreground_cell_zones": [
+    "foreground_component_mesh",
+    "fluid:1"
+  ],
+  "hull_wall_zones": [
+    "wall_mainhull",
+    "wall_amas"
+  ],
+  "background_cell_zone": "background_mesh",
+  "water_phase": "phase-2",
+  "inlet_zone": "inlet",
+  "outlet_zone": "outlet",
+  "ref_speed_mps": 2.5,
+  "ref_dt_s": 0.005,
+  "thrust_ceiling_full_N": 200.0,
+  "thrust_offset_below_keel_m": 0.238,
+  "_comment_measured": "Filled by `prepare_case.py template` from wall-vertex data at theta=0, z=0. null = not yet measured.",
+  "hull_zmin_at_ref": -0.25463688373565674,
+  "hull_length_m": 1.2225950956344604,
+  "_comment_envelope": "PLACEHOLDER. Must be checked against the background refinement (boi_tunnel) and overset donor coverage before large sweeps.",
+  "envelope": {
+    "theta_deg": [
+      -3.0,
+      6.0
+    ],
+    "z_m": [
+      -0.06,
+      0.06
+    ]
+  },
+  "run": {
+    "settle_hull_lengths": 6.0,
+    "average_hull_lengths": 4.0,
+    "max_iter_per_step": 20
+  },
+  "template_hull_stats": {
+    "centroid": [
+      0.1405471284788393,
+      -0.32130431815300853,
+      -0.09431174754900365
+    ],
+    "min": [
+      -1.719161065368357e-17,
+      -0.875889778137207,
+      -0.25463688373565674
+    ],
+    "max": [
+      0.3657599985599518,
+      0.3467053174972534,
+      0.0
+    ],
+    "zmin": -0.25463688373565674,
+    "length": 1.2225950956344604,
+    "n_vertices": 40156
+  }
+}

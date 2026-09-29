@@ -1,0 +1,9 @@
+{
+ "execute_commands": {},
+ "case_modification": {
+  "enabled": false
+ },
+ "poor_mesh_numerics": {
+  "register_based": {}
+ }
+}

@@ -1,0 +1,232 @@
+{
+ "enabled": true,
+ "methods": {
+  "smoothing": {
+   "enabled": false
+  },
+  "remeshing": {
+   "enabled": false
+  },
+  "layering": {
+   "enabled": false
+  }
+ },
+ "options": {
+  "in_cylinder": {
+   "enabled": false,
+   "crank_shaft_speed": 0.1666666666666667,
+   "starting_crank_angle": 0.0,
+   "crank_period": 10000000000.0,
+   "crank_angle_step": 0.5,
+   "crank_radius": 0.0,
+   "connecting_rod_length": 0.0,
+   "piston_pin_offset": 0.0,
+   "piston_stroke_cutoff": 0.0,
+   "minimum_valve_lift": 0.0,
+   "write_in_cylinder_ouput": {
+    "enabled": false,
+    "write_freq": 0,
+    "swirl_center_method": "center of gravity",
+    "swirl_axis": [
+     0,
+     1,
+     0
+    ],
+    "tumble_x": [
+     0,
+     0,
+     1
+    ],
+    "tumble_y": [
+     1,
+     0,
+     0
+    ],
+    "threads": null,
+    "file_name": "C:\\Users\\vgnau\\Documents\\MIT\\Arcturus\\Trimaran_HalfD_run_22643276\\hull_6sec.txt"
+   }
+  },
+  "six_dof": {
+   "enabled": true,
+   "gravity": {
+    "x": 0,
+    "y": 0,
+    "z": -9.81
+   },
+   "write_motion_history": false,
+   "basename": "C:/Users/vgnau/Downloads/At2_Trimaran_Background_Labeled_Coarse",
+   "second_order": true,
+   "sdof_properties": {}
+  },
+  "implicit_update": {
+   "enabled": false,
+   "update_interval": 1,
+   "relaxation_factor": 0.1,
+   "residual_criterion": 1e-05
+  },
+  "contact_detection": {
+   "enabled": false,
+   "face_zones": null,
+   "proximity_threshold": 0.1,
+   "contact_udf": "",
+   "flow_control": {
+    "enabled": false
+   },
+   "verbosity": 0
+  }
+ },
+ "dynamic_zones": {
+  "dynamic-zone-1": {
+   "name": "dynamic-zone-1",
+   "zone": "wall_mainhull",
+   "type": "rigid-body",
+   "motion": {
+    "motion_def": "stage::libudf",
+    "six_dof": {
+     "enabled": true,
+     "passive": false
+    },
+    "exclude_motion_bc": false,
+    "relative_motion": {
+     "enabled": false
+    },
+    "rigid_body_properties": {
+     "cg_position": [
+      0.0,
+      -0.2,
+      -0.6049880423199872
+     ],
+     "orientation": {
+      "angle": 0.02035807692190499,
+      "axis": [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     },
+     "cg_velocity": [
+      0.0,
+      0.0,
+      -0.2143642768627589
+     ],
+     "angular_velocity": [
+      -0.01731434605819806,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "meshing": {
+    "adjacent_zones": {
+     "t0": {
+      "type": "constant",
+      "height": 0.0
+     }
+    }
+   },
+   "solver": {
+    "stabilization": {
+     "enabled": false
+    }
+   }
+  },
+  "dynamic-zone-2": {
+   "name": "dynamic-zone-2",
+   "zone": "wall_amas",
+   "type": "rigid-body",
+   "motion": {
+    "motion_def": "stage::libudf",
+    "six_dof": {
+     "enabled": true,
+     "passive": false
+    },
+    "exclude_motion_bc": false,
+    "relative_motion": {
+     "enabled": false
+    },
+    "rigid_body_properties": {
+     "cg_position": [
+      0.0,
+      -0.2,
+      -0.6049880423199872
+     ],
+     "orientation": {
+      "angle": 0.02035807692190499,
+      "axis": [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     },
+     "cg_velocity": [
+      0.0,
+      0.0,
+      -0.2143642768627589
+     ],
+     "angular_velocity": [
+      -0.01731434605819806,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "meshing": {
+    "adjacent_zones": {
+     "t0": {
+      "type": "constant",
+      "height": 0.0
+     },
+     "t1": {
+      "type": "constant",
+      "height": 0.0
+     }
+    }
+   },
+   "solver": {
+    "stabilization": {
+     "enabled": false
+    }
+   }
+  },
+  "dynamic-zone-3": {
+   "name": "dynamic-zone-3",
+   "zone": "foreground_component_mesh",
+   "type": "rigid-body",
+   "motion": {
+    "motion_def": "stage::libudf",
+    "six_dof": {
+     "enabled": true,
+     "passive": true
+    },
+    "relative_motion": {
+     "enabled": false
+    },
+    "rigid_body_properties": {
+     "cg_position": [
+      0.0,
+      -0.2,
+      -0.6049880423199872
+     ],
+     "orientation": {
+      "angle": 0.02035807692190499,
+      "axis": [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     },
+     "cg_velocity": [
+      0.0,
+      0.0,
+      -0.2143642768627589
+     ],
+     "angular_velocity": [
+      -0.01731434605819806,
+      0.0,
+      0.0
+     ]
+    }
+   }
+  }
+ }
+}
