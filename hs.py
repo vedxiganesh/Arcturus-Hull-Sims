@@ -10,7 +10,8 @@ LOCAL (Arcturus/hullsweep, reefs-mobo env)
   hs sync pull S [--with-data]
 
 CLUSTER (~/hullsweep_code/bin/hs)
-  hs new --topology T --study S --speeds 2.0,2.5 --x0 THETA,Z [options]
+  hs new --topology T --study S --speeds 2.0,2.5 --x0 THETA,Z [--relax] [options]
+  hs new --topology T --study S_free --from-study S [--speeds ...] [--case C ...]   (2DOF relaxation)
   hs status S
   hs stop S | hs resume S
   hs advance S                      (the orchestrator step; normally run by Slurm)
@@ -121,17 +122,42 @@ def cmd_sync(a) -> None:
 # ---------------------------------------------------------------------------
 
 
+def free_config(a, topo) -> dict:
+    """study["free"]: how a converged chain is released and judged."""
+    from common import IMPLICIT_6DOF_BELOW_K_OVER_L, INERTIA_2DOF_C, pitch_gyration_ratio
+
+    run = topo["run"]
+    k_over_l = pitch_gyration_ratio(topo, a.ixx_full)
+    implicit = (a.implicit_6dof == "on"
+                or (a.implicit_6dof == "auto" and k_over_l < IMPLICIT_6DOF_BELOW_K_OVER_L))
+    return {"relax_on": [s.strip().upper() for s in a.relax_on.split(",") if s.strip()],
+            "tol_theta_deg": a.free_tol_theta, "tol_z_m": a.free_tol_z,
+            "settle_hull_lengths": run["settle_hull_lengths"] if a.free_settle is None else a.free_settle,
+            "average_hull_lengths": run["average_hull_lengths"] if a.free_average is None else a.free_average,
+            "export_every_s": a.export_every, "thrust": a.thrust,
+            "inertia_full_kgm2": {**INERTIA_2DOF_C, "ixx": a.ixx_full},
+            "implicit_update": {"enabled": implicit, "mode": a.implicit_6dof, "k_over_L": k_over_l,
+                                "update_interval": a.implicit_interval,
+                                "relaxation_factor": a.implicit_relax, "residual_criterion": 1e-5}}
+
+
 def build_study(a, topo) -> dict:
     import ledger
 
-    speeds = floats(a.speeds)
-    if not speeds or any(s <= 0 for s in speeds):
+    speeds = floats(a.speeds) if a.speeds else []
+    if any(s <= 0 for s in speeds) or (not speeds and not a.from_study):
         sys.exit("--speeds must be positive, e.g. 2.0,2.5,3.0")
-    mode = "grid" if (a.theta or a.z) else "newton"
+    mode = "free" if a.from_study else "grid" if (a.theta or a.z) else "newton"
+    if mode == "free" and (a.x0 or a.theta or a.z):
+        sys.exit("--from-study releases converged points; it takes no --x0/--theta/--z")
     if mode == "grid" and not (a.theta and a.z):
         sys.exit("a grid study needs both --theta and --z")
     if mode == "newton" and not a.x0:
         sys.exit("a Newton study needs --x0 THETA_DEG,Z_M (the starting point)")
+    if a.case and mode != "free":
+        sys.exit("--case picks parent cases for --from-study")
+    if a.relax and mode != "newton":
+        sys.exit("--relax follows Newton convergence; use --from-study to release chosen points")
     x0 = floats(a.x0) if a.x0 else None
     if x0 is not None and len(x0) != 2:
         sys.exit("--x0 is THETA_DEG,Z_M")
@@ -159,6 +185,7 @@ def build_study(a, topo) -> dict:
         "cg_offset": list(a.cg_offset), "max_retries": a.max_retries,
         "run_override": run_override, "stop_margin_s": stop_margin, "slurm": slurm,
         "smoke": bool(a.smoke),
+        "free": free_config(a, topo) if (a.relax or mode == "free") else None,
     }
 
 
@@ -213,11 +240,16 @@ def print_plan(sp, study, topo, seeds, skipped) -> None:
     print(f"  slurm        {sc['partition']}  {sc['ntasks']} cores  {sc['mem']}  {sc['time']}  "
           f"{sc['lanes']} lanes -> {ledger.license_need(sc)}/{ledger.HPC_POOL} HPC licenses")
     for s in study["speeds"]:
-        p = ledger.case_plan(topo, study, s)
+        p = (ledger.free_plan if study["mode"] == "free" else ledger.case_plan)(topo, study, s)
         hours = p["steps"] * REF_S_PER_STEP * REF_NTASKS / sc["ntasks"] / 3600
         print(f"  V={s:<5g}      dt {p['dt_s']:.4g} s  {p['steps']} steps  settle {p['settle_time_s']:.2f} s  "
-              f"~{hours:.1f} h/case (estimate)")
-    if study["mode"] == "newton":
+              f"~{hours:.1f} h/case (estimate{', captive speed: moving overset is slower' if study['mode'] == 'free' else ''})")
+    if study["mode"] == "free":
+        print(f"  parent       {study['parent']}")
+        for src in study["sources"]:
+            print(f"  release      {src['key']}: {src['case_id']}  θ={src['theta']:+.2f}° z={src['z'] * 1000:+.1f}mm  "
+                  f"(R_lift {src['row'].get('R_lift_N')}, R_pitch {src['row'].get('R_pitch_Nm')})")
+    elif study["mode"] == "newton":
         print(f"  x0           theta {study['x0'][0]:+g} deg, z {study['x0'][1] * 1000:+g} mm")
         for m in check_envelope(topo, *study["x0"]):
             print(f"  WARNING      x0 {m}")
@@ -229,12 +261,38 @@ def print_plan(sp, study, topo, seeds, skipped) -> None:
         g = study["grid"]
         print(f"  grid         theta {g['theta']}  z {g['z']}  -> "
               f"{len(study['speeds']) * len(g['theta']) * len(g['z'])} cases")
+    if study.get("free"):
+        print_free_plan(study, topo)
     if study["cg_offset"] != [0.0, 0.0]:
         print(f"  cg offset    {study['cg_offset']} m (body frame)")
     if seeds or skipped:
         print(f"  seeds        {len(seeds)} imported from {study['seed']['file']}")
         for s in skipped:
             print(f"               skipped {s}")
+
+
+def print_free_plan(study, topo) -> None:
+    import ledger
+    from common import free_release
+
+    fc = study["free"]
+    rel = free_release(topo, 0.0, 0.0, study["cg_offset"], inertia_full=fc["inertia_full_kgm2"])
+    if study["mode"] != "free":
+        print(f"  relax        after {'/'.join(fc['relax_on'])}: one free-running 2DOF case per chain")
+        s0 = study["speeds"][0]
+        p = ledger.free_plan(topo, study, s0)
+        print(f"  free run     V={s0:g}: {p['steps']} steps, settle {p['settle_time_s']:.2f} s "
+              f"({fc['settle_hull_lengths']:g} + {fc['average_hull_lengths']:g} hull lengths)")
+    iu = fc["implicit_update"]
+    print(f"  6DOF body    mass {rel.mass_kg:g} kg, Ixx {rel.inertia_kgm2['ixx']:.4g} kg*m^2 (simulated domain; "
+          f"k = {iu['k_over_L']:.3f} L); heave + pitch free")
+    print(f"  implicit     {'ON' if iu['enabled'] else 'off'} ({iu['mode']}"
+          + (f"; every {iu['update_interval']} iteration(s), relaxation {iu['relaxation_factor']:g}"
+             if iu["enabled"] else "") + ")")
+    print(f"  thrust       {fc['thrust']}{' (the parent case T, as a body-frame load)' if fc['thrust'] == 'constant' else ' (towed at the CG: NOT the captive balance)'}")
+    print(f"  verdict      VERIFIED if |dθ|, θ drift <= {fc['tol_theta_deg']}° and |dz|, z drift <= "
+          f"{fc['tol_z_m'] * 1000:g} mm over the averaging window")
+    print(f"  outputs      EnSight every {fc['export_every_s']:g} s flow time, 6DOF motion history")
 
 
 def cmd_new(a) -> None:
@@ -250,7 +308,23 @@ def cmd_new(a) -> None:
     template = layout.topology_file(a.topology, "template")
     study = build_study(a, topo)
 
+    if study["mode"] == "free":
+        parent = layout.find_study(a.from_study)
+        if parent.topology != topo.name:
+            sys.exit(f"study {parent.name} belongs to topology {parent.topology}, not {topo.name}")
+        pstudy = ledger.read_json(parent.study_json)
+        sources, problems = ledger.free_sources(parent, study["free"]["relax_on"], floats(a.speeds or ""),
+                                                a.case)
+        for p in problems:
+            print(f"  note         {p}")
+        if not sources:
+            sys.exit(f"nothing to release from {parent.name}")
+        study.update(parent=parent.name, sources=sources, cg_offset=pstudy.get("cg_offset", [0.0, 0.0]),
+                     speeds=sorted({s["speed"] for s in sources}))
+
     seeds, skipped = [], []
+    if a.seed and study["mode"] == "free":
+        sys.exit("--seed does not apply to --from-study")
     if a.seed:
         if study["cg_offset"] != [0.0, 0.0]:
             sys.exit("--seed rows were reduced with cg_offset 0; not valid with --cg-offset")
@@ -334,6 +408,8 @@ def cmd_path(a) -> None:
 
 
 def main(argv=None) -> None:
+    from common import IMPLICIT_6DOF_BELOW_K_OVER_L, PITCH_IXX_FULL
+
     ap = argparse.ArgumentParser(prog="hs", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -371,7 +447,7 @@ def main(argv=None) -> None:
                        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     n.add_argument("--topology", required=True)
     n.add_argument("--study", required=True)
-    n.add_argument("--speeds", required=True, help="comma list, m/s")
+    n.add_argument("--speeds", help="comma list, m/s (with --from-study: optional filter)")
     n.add_argument("--x0", help="Newton start THETA_DEG,Z_M")
     n.add_argument("--theta", help="grid study: comma list of theta (deg)")
     n.add_argument("--z", help="grid study: comma list of z (m)")
@@ -396,6 +472,28 @@ def main(argv=None) -> None:
     n.add_argument("--ignore-license-limit", action="store_true")
     n.add_argument("--smoke", action="store_true",
                    help="10 steps per case on mit_quicktest (8 cores): tests the machinery, not physics")
+    fr = n.add_argument_group("free-running 2DOF relaxation (heave + pitch free, released from a "
+                              "converged captive case's solution)")
+    fr.add_argument("--relax", action="store_true",
+                    help="Newton study: after a chain converges, run one free case from its best point")
+    fr.add_argument("--from-study", help="release the converged chains of this (finished) study instead")
+    fr.add_argument("--case", action="append", help="with --from-study: release this captive case id "
+                                                    "(repeatable) instead of the chain results")
+    fr.add_argument("--relax-on", default="CONVERGED", help="Newton end states that get a free run")
+    fr.add_argument("--free-tol-theta", type=float, default=0.1, help="deg: offset and window drift")
+    fr.add_argument("--free-tol-z", type=float, default=0.002, help="m: offset and window drift")
+    fr.add_argument("--free-settle", type=float, help="hull lengths before averaging (default: topology run)")
+    fr.add_argument("--free-average", type=float, help="hull lengths averaged (default: topology run)")
+    fr.add_argument("--export-every", type=float, default=0.1, help="EnSight export interval, s flow time")
+    fr.add_argument("--thrust", choices=("constant", "none"), default="constant",
+                    help="constant: the parent case's T as a body-frame UDF load (the captive balance)")
+    fr.add_argument("--ixx-full", type=float, default=PITCH_IXX_FULL,
+                    help="FULL-boat pitch inertia about the CG, kg*m^2 (halved for a half domain)")
+    fr.add_argument("--implicit-6dof", choices=("auto", "on", "off"), default="auto",
+                    help="6DOF implicit update; auto: on when the pitch radius of gyration < "
+                         f"{IMPLICIT_6DOF_BELOW_K_OVER_L} L (a light body next to its added mass)")
+    fr.add_argument("--implicit-relax", type=float, default=0.1, help="implicit update motion relaxation")
+    fr.add_argument("--implicit-interval", type=int, default=1, help="iterations between implicit updates")
     n.add_argument("--dry-run", action="store_true")
     n.add_argument("--yes", action="store_true", help="skip the type-the-name confirmation")
     n.set_defaults(fn=cmd_new)

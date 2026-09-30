@@ -15,6 +15,14 @@ One Fluent session per attempt:
           preempted or walltime-stopped attempt): read both, set earlier
           report files aside as *.part<k>.out, run the remaining steps.
 
+A FREE case (request kind "free") is a 2DOF relaxation of a converged captive
+case. Fresh prep reads the parent's <id>_final.cas/dat instead of the template,
+then compiles the generated UDF and arms 6DOF (fluent_ops.prepare_free_case).
+There is no initialization. The mesh moves, so autosaves write the case each
+time, and a resume reads the newest cas+dat autosave pair. Steps count from the
+release: the flow time and step counter carry on from the parent. After each
+chunk the live 6DOF state is appended to sw-motion.csv.
+
 The run advances in chunks. It stops before the Slurm end time
 (HULL_DEADLINE_EPOCH minus stop_margin_s), writes sw-stop-<step>.dat.h5, and
 sets its status to 'incomplete'; case_job.sh then requeues the job.
@@ -38,9 +46,10 @@ os.environ.setdefault("MKL_NUM_THREADS", "1")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import fluent_ops as fo  # noqa: E402
 import layout  # noqa: E402
 import progress  # noqa: E402
-from common import file_sha1  # noqa: E402
+from common import Release, file_sha1  # noqa: E402
 
 CHUNK_STEPS = 10
 AUTOSAVE_EVERY = 100
@@ -76,8 +85,11 @@ class Case:
         self.study = json.loads(self.sp.study_json.read_text())
         self.req = json.loads((self.dir / layout.REQUEST_FILE).read_text())
         self.subject = progress.short_case(cid, self.sp.topology)
-        self.tag = f"{progress.chain_tag(self.req['speed_mps'])}/it{self.req['iteration']}"
+        self.free = self.req.get("kind", "captive") == "free"
+        self.tag = (f"{progress.chain_tag(self.req['speed_mps'])}/"
+                    f"{'free' if self.free else 'it' + str(self.req['iteration'])}")
         self.total = int(self.req["steps"])
+        self.step0 = 0  # time-step counter at release (free cases carry the parent's on)
 
     def emit(self, event: str, detail: str = "") -> None:
         progress.emit(self.sp.progress_log, "case", self.subject, event, f"{self.tag} {detail}".strip(),
@@ -117,25 +129,36 @@ def check_identity(case: Case, topo, template: Path) -> None:
 # --- resume -------------------------------------------------------------------
 
 
-def latest_autosave(work: Path) -> Path | None:
+def case_of(dat: Path) -> Path:
+    """The case file written with a data file (same stem)."""
+    return dat.with_name(dat.name[: -len(".dat.h5")] + ".cas.h5")
+
+
+def latest_autosave(work: Path, with_case: bool = False) -> Path | None:
+    """Newest autosave data file; with_case: only one whose case file exists too (moving mesh)."""
     best, best_n = None, -1
     for p in work.glob(f"{AUTOSAVE_ROOT}-*.dat.h5"):
         m = _AUTOSAVE_RE.match(p.name)
-        if m and int(m.group(1)) > best_n:
+        if m and int(m.group(1)) > best_n and (not with_case or case_of(p).exists()):
             best, best_n = p, int(m.group(1))
     return best
 
 
 def set_aside_report_files(work: Path) -> None:
-    """Keep earlier attempts' report rows; Fluent may truncate on reopen."""
-    for p in work.glob("*.out"):
+    """Keep earlier attempts' output rows; Fluent may truncate on reopen.
+
+    Report files, the 6DOF motion history and the EnSight index become
+    <stem>.part<k><suffix>. The per-step EnSight files are numbered and never collide.
+    """
+    files = [*work.glob("*.out"), *work.glob("*.6dof"), *work.glob(f"{fo.ENSIGHT_DIR}/*.encas")]
+    for p in files:
         if ".part" in p.name:
             continue
         k = 1
-        while (work / f"{p.stem}.part{k}.out").exists():
+        while p.with_name(f"{p.stem}.part{k}{p.suffix}").exists():
             k += 1
-        p.rename(work / f"{p.stem}.part{k}.out")
-        log(f"set aside {p.name} -> {p.stem}.part{k}.out")
+        p.rename(p.with_name(f"{p.stem}.part{k}{p.suffix}"))
+        log(f"set aside {p.name} -> {p.stem}.part{k}{p.suffix}")
 
 
 # --- Fluent -------------------------------------------------------------------
@@ -161,7 +184,9 @@ def flow_state(solver):
         return None, None
 
 
-def configure(solver, case: Case, fo) -> None:
+def configure(solver, case: Case, topo) -> bool:
+    """Time step, autosave, report files, exports. Returns False if a free case's EnSight
+    export could not be registered."""
     rc = solver.settings.solution.run_calculation
     rc.parameters.time_step_size = float(case.req["dt_s"])
     rc.parameters.max_iter_per_time_step = int(case.req["max_iter_per_step"])
@@ -170,7 +195,8 @@ def configure(solver, case: Case, fo) -> None:
     auto = solver.settings.solution.calculation_activity.auto_save
     auto.data_frequency = AUTOSAVE_EVERY
     try:
-        auto.case_frequency = "if-case-is-modified"  # static mesh: the case never changes
+        # static mesh: the case never changes; moving mesh: a .dat alone cannot restart
+        auto.case_frequency = "each-time" if case.free else "if-case-is-modified"
     except Exception as exc:
         log(f"case_frequency left as is ({exc})")
     auto.root_name = str(case.dir / AUTOSAVE_ROOT)
@@ -182,20 +208,48 @@ def configure(solver, case: Case, fo) -> None:
     log(f"autosave: {auto.get_state()}")
 
     fo.relativize_report_files(solver)  # report files land in the case dir
+    if case.free:
+        return fo.configure_ensight(solver, topo, case.dir, float(case.req["export_every_s"]))
     for cmd in ("/solve/execute-commands/delete export-1",
                 "/file/transient-export/settings/delete export-1"):
         try:
             fo.tui(solver, cmd)
         except Exception:
             pass
+    return True
 
 
-def advance(solver, case: Case, done: int, deadline: float, margin: float) -> tuple[bool, float, int]:
+class MotionLog:
+    """Appends the live 6DOF state of the first hull wall to sw-motion.csv after each chunk."""
+
+    def __init__(self, solver, case: Case, topo):
+        self.solver, self.zone = solver, topo["hull_wall_zones"][0]
+        self.path = case.dir / fo.MOTION_LOG
+        self.ok = True
+        if not self.path.exists():
+            self.path.write_text(fo.MOTION_LOG_HEADER + "\n")
+
+    def __call__(self) -> None:
+        if not self.ok:
+            return
+        try:
+            t, n = flow_state(self.solver)
+            s = fo.read_sdof_state(self.solver, self.zone)
+            with open(self.path, "a") as f:
+                f.write(f"{t!r},{n},{s['cg'][0]!r},{s['cg'][1]!r},{s['cg'][2]!r},{s['theta_x_deg']!r}\n")
+        except Exception as exc:  # the .6dof history is still there; do not kill the run
+            self.ok = False
+            log(f"WARNING: 6DOF state sampling disabled ({exc!r})")
+
+
+def advance(solver, case: Case, done: int, deadline: float, margin: float,
+            on_chunk=None) -> tuple[bool, float, int]:
     """Run the remaining steps in chunks; stop early if the next chunk would cross the deadline.
 
     Returns (stopped_for_deadline, solve_wall_seconds, steps_run). On 26R1
     dual_time_iterate's inner-iteration argument is max_iter_per_step, so only
     time_step_count is passed and the cap comes from run_calculation.parameters.
+    `done` and the returned counts are steps since the case's own start.
     """
     rc = solver.settings.solution.run_calculation
     remaining = case.total - done
@@ -217,6 +271,8 @@ def advance(solver, case: Case, done: int, deadline: float, margin: float) -> tu
             rc.calculate()
         ran += n
         chunk_sps = (time.time() - c0) / n
+        if on_chunk is not None:
+            on_chunk()
         sps = chunk_sps if sps is None else max(sps, chunk_sps)
         step = done + ran
         eta = (case.total - step) * chunk_sps
@@ -255,8 +311,6 @@ def main() -> int:
 
     import ansys.fluent.core as pyfluent
 
-    import fluent_ops as fo
-
     log(f"pyfluent {pyfluent.__version__}; code {json.dumps(ledger_version())}")
     log(f"request: {json.dumps(case.req)}")
     t_start = time.time()
@@ -264,7 +318,10 @@ def main() -> int:
     phase = "check"
     try:
         check_identity(case, topo, template)
-        resume = latest_autosave(case.dir) if case.cas.exists() and case.sidecar.exists() else None
+        if case.free:
+            resume = latest_autosave(case.dir, with_case=True) if case.sidecar.exists() else None
+        else:
+            resume = latest_autosave(case.dir) if case.cas.exists() and case.sidecar.exists() else None
         if resume is not None:
             set_aside_report_files(case.dir)
 
@@ -276,8 +333,30 @@ def main() -> int:
         phase = "prep"
         if resume is not None:
             case.emit("RESUME", f"job {job} node {node} restart {restarts} from {resume.name}")
-            fo.read_case(solver, str(case.cas))
+            fo.read_case(solver, str(case_of(resume) if case.free else case.cas))
             solver.settings.file.read(file_type="data", file_name=str(resume))
+            if case.free:
+                case.step0 = int(json.loads(case.sidecar.read_text())["step_release"])
+        elif case.free:
+            case.emit("PREP", f"job {job} node {node} restart {restarts}  from {case.req['parent_case_id']}")
+            rel = Release.from_dict(case.req["release"])
+            facts = fo.prepare_free_case(solver, topo, Path(case.req["parent_cas"]), Path(case.req["parent_dat"]),
+                                         rel, float(case.req["dt_s"]), int(case.req["max_iter_per_step"]),
+                                         case.dir, case.req.get("parent_hull_centroid"),
+                                         case.req.get("implicit_update"))
+            t0, n0 = flow_state(solver)
+            if n0 is None:
+                raise RuntimeError("could not read the time-step counter at release")
+            case.step0 = n0
+            fo.write_case(solver, str(case.cas), data=False)  # the armed case, for inspection
+            sidecar = {**case.req, **facts, "t_release_s": t0, "step_release": n0,
+                       "template": {"path": str(template), "sha1": case.study["sha1"]["template"]["sha1"]},
+                       "fluent_version": version, "prepared_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            case.sidecar.write_text(json.dumps(sidecar, indent=1, default=str))
+            case.emit("PREPPED", f"released at t={t0:.4f} s step {n0}: CG {[round(v, 5) for v in rel.cg]}  "
+                                 f"mass {rel.mass_kg:g} kg  Ixx {rel.inertia_kgm2['ixx']:.4g}  "
+                                 f"thrust {rel.thrust_N:.2f} N  UDF via {facts['udf_route']}  "
+                                 f"implicit 6DOF {'on' if facts['implicit_update'].get('enabled') else 'off'}")
         else:
             case.emit("PREP", f"job {job} node {node} restart {restarts}")
             facts = fo.prepare_case(solver, topo, template, float(case.req["theta_deg"]), float(case.req["z_m"]),
@@ -297,28 +376,36 @@ def main() -> int:
 
         phase = "solve"
         t, n = flow_state(solver)
-        done = n or 0
-        if resume is None and t is not None and abs(t) > 1e-9:
+        done = (n or 0) - case.step0
+        if resume is None and not case.free and t is not None and abs(t) > 1e-9:
             log(f"WARNING: fresh case starts at flow-time {t}, not 0")
-        configure(solver, case, fo)
+        if not configure(solver, case, topo):
+            case.emit("WARNING", "EnSight export NOT registered; the run continues without it")
+        on_chunk = MotionLog(solver, case, topo) if case.free else None
+        if on_chunk is not None and resume is None:
+            on_chunk()  # the release state itself
         case.status(state="running", time_step=done, job=job)
         case.emit("ITERATING", f"job {job} {node}  steps {done}->{case.total}  dt {case.req['dt_s']:.4g}"
                   + (f"  deadline {progress.fmt_hours(deadline - time.time())}" if deadline else ""))
-        stopped, wall, ran = advance(solver, case, done, deadline, margin)
+        stopped, wall, ran = advance(solver, case, done, deadline, margin, on_chunk)
 
         t, n = flow_state(solver)
+        step = (n or 0) - case.step0
         sps = wall / max(ran, 1)
         if stopped:
             stop = case.dir / f"{AUTOSAVE_ROOT}-stop-{(n or 0):05d}.dat.h5"
-            solver.settings.file.write(file_type="data", file_name=str(stop))
-            case.status(state="incomplete", flow_time=t, time_step=n, solve_wall_s=wall, s_per_step=sps)
-            case.emit("INCOMPLETE", f"walltime: stopped at {n}/{case.total}, wrote {stop.name}; requeue")
+            if case.free:  # moving mesh: the case goes with the data
+                solver.settings.file.write(file_type="case-data", file_name=str(stop)[: -len(".dat.h5")])
+            else:
+                solver.settings.file.write(file_type="data", file_name=str(stop))
+            case.status(state="incomplete", flow_time=t, time_step=step, solve_wall_s=wall, s_per_step=sps)
+            case.emit("INCOMPLETE", f"walltime: stopped at {step}/{case.total}, wrote {stop.name}; requeue")
             return 0
 
         solver.settings.file.write(file_type="case-data", file_name=str(case.dir / f"{case.cid}_final"))
-        case.status(state="complete", flow_time=t, time_step=n, solve_wall_s=wall, s_per_step=sps,
+        case.status(state="complete", flow_time=t, time_step=step, solve_wall_s=wall, s_per_step=sps,
                     total_wall_s=time.time() - t_start)
-        case.emit("COMPLETE", f"{n}/{case.total} steps  {progress.fmt_hours(time.time() - t_start)} "
+        case.emit("COMPLETE", f"{step}/{case.total} steps  {progress.fmt_hours(time.time() - t_start)} "
                               f"({sps:.1f} s/step)")
         return 0
     except Exception as exc:

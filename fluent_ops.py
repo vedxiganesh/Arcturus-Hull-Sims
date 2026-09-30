@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -24,10 +25,14 @@ from common import (
     COMPONENTS,
     REPORT_FILE,
     REPORT_PREFIX,
+    SDOF_UDF_NAME,
+    UDF_LIBRARY,
     CaseTransform,
+    Release,
     Topology,
     report_groups,
     report_name,
+    udf_source,
 )
 
 
@@ -679,3 +684,221 @@ def check_water_level(solver, topo: Topology, tol: float = 0.03) -> dict:
             "open-channel flat initialization did not take -- do not run this case."
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# Free-running 2DOF relaxation from a converged captive case (cluster, 26R1)
+# ---------------------------------------------------------------------------
+
+#: Written into the free case dir and compiled there (per case, so concurrent jobs never
+#: share a libudf; CLAUDE.md section 4).
+SDOF_SOURCE = "sw_sdof.c"
+#: six_dof basename. Relative: Fluent's cwd is the case dir.
+MOTION_BASENAME = "sw-motion"
+#: Motion sampled by run_case after every chunk, from the live rigid_body_properties.
+#: It does not depend on how Fluent's own .6dof file behaves on restart.
+MOTION_LOG = "sw-motion.csv"
+MOTION_LOG_HEADER = "flow_time,time_step,cg_x,cg_y,cg_z,theta_x_deg"
+ENSIGHT_DIR = "ensight"
+#: Relative on purpose: the export is registered by one TUI line split on spaces, and case
+#: dir paths contain '+'.
+ENSIGHT_BASENAME = f"{ENSIGHT_DIR}/free"
+ENSIGHT_OBJECT = "sw-ensight"
+
+
+def compile_udf(solver, case_dir: Path, rel: Release, note: str = "") -> dict:
+    """Write the release's 2DOF UDF into the case dir, compile it to libudf, and load it."""
+    src = case_dir / SDOF_SOURCE
+    src.write_text(udf_source(rel, note))
+    lib = case_dir / UDF_LIBRARY
+    if lib.exists():  # a stale build from an earlier attempt: Fluent would ask about it
+        shutil.rmtree(lib)
+        log(f"removed stale {lib}")
+    ud = solver.settings.setup.user_defined
+    route = "tui"
+    if has_child(ud, "compiled_udf") and has_child(ud, "load"):
+        try:
+            ud.compiled_udf(library_name=UDF_LIBRARY, source_files=[SDOF_SOURCE], header_files=[])
+            ud.load(udf_library_name=UDF_LIBRARY)
+            route = "settings"
+        except Exception as exc:
+            log(f"settings compiled_udf/load failed ({exc}); trying the TUI")
+    if route == "tui":
+        # UNVERIFIED prompt order: library, 'yes' to add sources, source, header list.
+        tui(solver, f'/define/user-defined/compiled-functions compile {UDF_LIBRARY} yes {SDOF_SOURCE} "" ""')
+        tui(solver, f"/define/user-defined/compiled-functions load {UDF_LIBRARY}")
+    if not lib.is_dir():
+        raise CaseSetupError(f"UDF compile via {route} left no {lib}; see the Fluent transcript")
+    log(f"compiled and loaded {SDOF_SOURCE} -> {UDF_LIBRARY} via {route}")
+    return {"udf_source": src.name, "udf_route": route}
+
+
+def _create_dynamic_zone(dz, name: str, zone: str, state: dict) -> str:
+    """Create one dynamic zone. Returns the route used."""
+    try:
+        dz[name] = state
+        return "setitem"
+    except Exception as exc:
+        log(f"dynamic_zones[{name!r}] = state failed ({exc}); trying create(zone=...)")
+    before = set(dz.get_object_names())
+    dz.create(zone=zone)
+    new = set(dz.get_object_names()) - before
+    if len(new) != 1:
+        raise CaseSetupError(f"dynamic_zones.create(zone={zone!r}) made {sorted(new)}, expected one zone")
+    dz[new.pop()].set_state({k: v for k, v in state.items() if k != "zone"})
+    return "create"
+
+
+def set_implicit_update(dm, implicit: dict | None) -> dict:
+    """6DOF implicit update (dynamic_mesh.options.implicit_update, 26R1 fields).
+
+    On, the 6DOF motion is updated inside the time step every update_interval iterations,
+    under-relaxed by relaxation_factor. This is Fluent's remedy for the added-mass
+    instability of a body that is light compared with the water it moves.
+    """
+    iu = dm.options.implicit_update
+    if not implicit or not implicit.get("enabled"):
+        iu.enabled = False
+        log("6DOF implicit update off")
+        return {"enabled": False}
+    iu.enabled = True  # the other fields are inactive until this is set
+    for k in ("update_interval", "relaxation_factor", "residual_criterion"):  # not mode/k_over_L
+        if k in implicit:
+            setattr(iu, k, implicit[k])
+    state = iu.get_state()
+    log(f"6DOF implicit update on: {state}")
+    return state
+
+
+def arm_six_dof(solver, topo: Topology, rel: Release, implicit: dict | None = None) -> dict:
+    """Dynamic mesh on, 6DOF on, and one rigid-body dynamic zone per foreground part.
+
+    The hull walls carry the 6DOF body (UDF stage::libudf). Every foreground cell zone
+    follows it as a passive rigid body. That includes the solid fluid:1 inside the ama:
+    the GUI setup left it static, but it shares nodes with the moving wall_amas.
+    The layout follows introspection/hull_6sec/state.setup.dynamic_mesh.json.
+    The orientation starts at 0, so the 6DOF angles are measured from the captive trim.
+    `implicit` is study["free"]["implicit_update"] (see set_implicit_update).
+    """
+    dm = solver.settings.setup.dynamic_mesh
+    dm.enabled = True
+    six = dm.options.six_dof
+    six.enabled = True
+    six.gravity = {"x": 0.0, "y": 0.0, "z": -float(topo["g"])}
+    six.write_motion_history = True
+    six.basename = MOTION_BASENAME
+    six.second_order = True
+    implicit_state = set_implicit_update(dm, implicit)
+    dz = dm.dynamic_zones
+    for name in list(dz.get_object_names()):
+        del dz[name]
+        log(f"deleted dynamic zone {name}")
+
+    motion_def = f"{SDOF_UDF_NAME}::{UDF_LIBRARY}"
+    rbp = {"cg_position": list(rel.cg), "orientation": {"angle": 0.0, "axis": [1.0, 0.0, 0.0]},
+           "cg_velocity": [0.0, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 0.0]}
+    specs = ([(z, False) for z in topo["hull_wall_zones"]]
+             + [(z, True) for z in topo["foreground_cell_zones"]])
+    routes = {}
+    for i, (zone, passive) in enumerate(specs):
+        state = {"zone": zone, "type": "rigid-body",
+                 "motion": {"motion_def": motion_def, "six_dof": {"enabled": True, "passive": passive},
+                            "rigid_body_properties": rbp}}
+        routes[zone] = _create_dynamic_zone(dz, f"sw-dz-{i}", zone, state)
+
+    got = dz.get_state()
+    seen = {}
+    for z in got.values():
+        m = z.get("motion") or {}
+        seen[z.get("zone")] = (z.get("type"), m.get("motion_def"), (m.get("six_dof") or {}).get("passive"))
+    want = {zone: ("rigid-body", motion_def, passive) for zone, passive in specs}
+    if seen != want:
+        raise CaseSetupError(f"dynamic zones read back as {seen}, wanted {want}")
+    log(f"6DOF armed: CG {list(rel.cg)}, mass {rel.mass_kg:g} kg, zones {routes}")
+    return {"dynamic_zone_routes": routes, "dynamic_zones": got, "implicit_update": implicit_state}
+
+
+def ensight_command(water_phase: str, every_s: float) -> str:
+    """One-line TUI registration of an EnSight Gold transient export on a flow-time trigger.
+
+    Same prompt order as run_hull_vof.py's build_export_command: name, interior surfaces,
+    cell zones, scalars ending with 'q', cell-centred?, binary?, export name, trigger,
+    frequency, separate files?. That string wrote the EnSight series of job 22643276
+    (Trimaran_HalfD.encas: these five scalars plus velocity).
+    """
+    scalars = ["pressure", "wall-shear", f"{water_phase}-vof",
+               "cell-convective-courant-number", "moving-mesh-courant-number"]
+    return " ".join(["/file/transient-export/ensight-gold-transient", ENSIGHT_BASENAME, "()", "*", "()",
+                     *scalars, "q", "no", "yes", f'"{ENSIGHT_OBJECT}"', '"flow-time"',
+                     f"{float(every_s):g}", "yes"])
+
+
+def configure_ensight(solver, topo: Topology, case_dir: Path, every_s: float) -> bool:
+    """Replace any earlier export object with ours. Returns False (and logs) if it failed."""
+    (case_dir / ENSIGHT_DIR).mkdir(exist_ok=True)
+    for name in ("export-1", ENSIGHT_OBJECT):
+        for cmd in (f"/solve/execute-commands/delete {name}", f"/file/transient-export/settings/delete {name}"):
+            try:
+                tui(solver, cmd)
+            except Exception:
+                pass
+    cmd = ensight_command(topo["water_phase"], every_s)
+    log(f"EnSight export: {cmd}")
+    try:
+        tui(solver, cmd)
+    except Exception as exc:
+        log(f"WARNING: EnSight export NOT registered ({exc})")
+        return False
+    try:
+        tui(solver, "/file/transient-export/settings/list")
+    except Exception:
+        pass
+    return True
+
+
+def read_sdof_state(solver, zone: str) -> dict:
+    """Live 6DOF state of the dynamic zone on `zone`: CG and the X rotation since release."""
+    dz = solver.settings.setup.dynamic_mesh.dynamic_zones
+    for z in dz.get_state().values():
+        if z.get("zone") == zone:
+            rbp = z["motion"]["rigid_body_properties"]
+            o = rbp.get("orientation") or {}
+            axis = o.get("axis") or [1.0, 0.0, 0.0]
+            n = math.sqrt(sum(float(a) ** 2 for a in axis)) or 1.0
+            return {"cg": [float(v) for v in rbp["cg_position"]],
+                    "theta_x_deg": math.degrees(float(o.get("angle", 0.0)) * float(axis[0]) / n)}
+    raise KeyError(f"no dynamic zone on {zone!r}")
+
+
+def prepare_free_case(solver, topo: Topology, parent_cas: Path, parent_dat: Path, rel: Release,
+                      dt: float, max_iter: int, case_dir: Path,
+                      parent_hull_centroid: list | None = None, implicit: dict | None = None) -> dict:
+    """Converged captive case + data -> the same state with the hull free in heave and pitch.
+
+    No initialization: the converged flow is the initial condition. The hull centroid is
+    checked against the parent's own measurement, which also catches reading the wrong parent.
+    """
+    for p in (parent_cas, parent_dat):
+        if not p.is_file():
+            raise CaseSetupError(f"parent file missing: {p}")
+    read_case(solver, str(parent_cas))
+    log(f"read data: {parent_dat}")
+    solver.settings.file.read(file_type="data", file_name=str(parent_dat))
+
+    here = hull_stats(solver, topo)
+    diff = None
+    if parent_hull_centroid is not None:
+        diff = float(np.max(np.abs(np.asarray(here["centroid"]) - np.asarray(parent_hull_centroid))))
+        log(f"hull centroid vs parent's: {diff:.2e} m")
+        if diff > TEMPLATE_CENTROID_TOL_M:
+            raise CaseSetupError(f"hull centroid {here['centroid']} is {diff:.3g} m from the parent's "
+                                 f"{parent_hull_centroid}: not the parent case's geometry")
+
+    set_time_step(solver, dt, max_iter)
+    facts = compile_udf(solver, case_dir, rel, note=f"parent {parent_cas.name}")
+    facts.update(arm_six_dof(solver, topo, rel, implicit))
+    clear_convergence_conditions(solver)
+    relativize_report_files(solver)
+    return {**facts, "parent_cas": str(parent_cas), "parent_dat": str(parent_dat),
+            "hull_at_release": here, "parent_centroid_diff_m": diff, "release": rel.to_dict(),
+            "weight_domain_N": topo.weight_domain_N}

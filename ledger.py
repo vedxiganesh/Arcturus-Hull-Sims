@@ -13,6 +13,13 @@ advance() is idempotent and holds the ledger lock while it runs. It:
      job. It checks liveness itself, so it does not matter whether afterany
      fires when a case job requeues.
 
+Free-running relaxation (study["free"] set): a chain whose Newton result is in
+free.relax_on (default CONVERGED) does not end there. It enters phase "free"
+and runs ONE free case: the 2DOF hull released from its best captive case's
+converged solution. The chain then ends with a verdict (free_verdict):
+VERIFIED, DRIFTED, UNSETTLED or FREE_FAILED. A mode "free" study (`hs new
+--from-study P`) runs only this phase, on chains P has already converged.
+
 Slurm is reached only through the Slurm class so tests can substitute it.
 """
 
@@ -31,7 +38,7 @@ import collect
 import layout
 import newton
 import progress
-from common import case_id, file_sha1, plan_run, quantize_point
+from common import case_id, file_sha1, free_case_id, free_release, plan_free_run, plan_run, quantize_point
 
 #: Shared Web entitlement (CLAUDE.md section 12): ~71 anshpc usable, 4 cores ride on the CFD task.
 HPC_POOL = 71
@@ -41,6 +48,12 @@ LIVE_CASE = "queued"  # submitted or waiting to be submitted
 DONE_CASE = "done"
 BAD_CASE = "bad"
 SEED_CASE = "seed"
+
+#: Terminal chain states after the free-running phase.
+VERIFIED = "VERIFIED"  # settled within tolerance of the captive equilibrium
+DRIFTED = "DRIFTED"  # settled, but somewhere else
+UNSETTLED = "UNSETTLED"  # still moving over the averaging window
+FREE_FAILED = "FREE_FAILED"  # the free case did not produce a motion history
 
 
 class SubmitError(RuntimeError):
@@ -222,6 +235,20 @@ def case_plan(topo, study: dict, speed: float) -> dict:
     return {"dt_s": dt, "steps": steps, "settle_time_s": settle, "end_time_s": end}
 
 
+def free_plan(topo, study: dict, speed: float) -> dict:
+    """dt, steps and windows of a free case (times from release), run override applied."""
+    fc = study["free"]
+    p = plan_free_run(topo, speed, fc["settle_hull_lengths"], fc["average_hull_lengths"])
+    dt, steps, settle, end = p.dt_s, p.steps, p.settle_time_s, p.end_time_s
+    ov = study.get("run_override") or {}
+    if "steps" in ov:
+        steps = int(ov["steps"])
+        end = steps * dt
+    if "settle_time_s" in ov:
+        settle = float(ov["settle_time_s"])
+    return {"dt_s": dt, "steps": steps, "settle_time_s": settle, "end_time_s": end}
+
+
 def _num(v):
     if isinstance(v, str):
         if v in ("True", "False"):
@@ -258,6 +285,51 @@ def seed_rows(topo, study: dict, rows: list[dict]) -> tuple[list[dict], list[str
     return kept, skipped
 
 
+def free_sources(parent: layout.StudyPaths, relax_on: list[str], speeds: list[float] | None = None,
+                 cases: list[str] | None = None) -> tuple[list[dict], list[str]]:
+    """Captive cases of `parent` to release, and problems that block them.
+
+    Default: the best case of every chain whose Newton status is in relax_on. `cases`
+    picks finished captive cases by id instead (e.g. the best of a MAX_ITERS chain).
+    Each needs its <id>_final.cas.h5 + .dat.h5 in the parent's case dir.
+    """
+    led = read_json(parent.ledger_json)
+    picks, problems = [], []
+    if cases:
+        for cid in cases:
+            c = led["cases"].get(cid)
+            if c is None or c.get("kind") == "free" or c["state"] != DONE_CASE:
+                problems.append(f"{cid}: not a finished captive case of {parent.name}"
+                                f"{'' if c is None else ' (state ' + c['state'] + ')'}")
+                continue
+            picks.append((cid, c))
+    else:
+        for key, ch in led["chains"].items():
+            status = ch.get("newton_status", ch["status"])
+            cid = (ch.get("result") or {}).get("case_id")
+            if status in relax_on and cid in led["cases"]:
+                picks.append((cid, led["cases"][cid]))
+            else:
+                problems.append(f"chain {key}: {status} (not in {relax_on}); skipped")
+    out, keys = [], set()
+    for cid, c in picks:
+        if speeds and not any(abs(c["speed"] - s) < 1e-9 for s in speeds):
+            continue
+        cas, dat = parent_final({"dir": str(parent.case_dir(cid)), "case_id": cid})
+        missing = [p.name for p in (cas, dat) if not p.is_file()]
+        if missing:
+            problems.append(f"{cid}: missing {', '.join(missing)} in {cas.parent}")
+            continue
+        key = chain_key(c["speed"])
+        while key in keys:
+            key += "b"
+        keys.add(key)
+        out.append({"key": key, "speed": float(c["speed"]), "study": parent.name, "case_id": cid,
+                    "theta": float(c["theta"]), "z": float(c["z"]),
+                    "row": {k: c["row"].get(k) for k in SOURCE_ROW_KEYS}})
+    return out, problems
+
+
 def init_study(sp: layout.StudyPaths, study: dict, seeds: list[dict] | None = None) -> None:
     """Write study.json and the initial ledger. Refuses to touch an existing study."""
     if sp.study_json.exists():
@@ -278,6 +350,12 @@ def init_study(sp: layout.StudyPaths, study: dict, seeds: list[dict] | None = No
     if study["mode"] == "grid":
         led["chains"]["grid"] = {"speed": None, "status": "active", "pending": [], "history": [],
                                  "state": None, "result": None}
+    elif study["mode"] == "free":
+        for src in study["sources"]:
+            led["chains"][src["key"]] = {"speed": float(src["speed"]), "status": "active", "phase": "free",
+                                         "pending": [], "history": [], "state": None, "source": src,
+                                         "result": {"case_id": src["case_id"], "theta_deg": src["theta"],
+                                                    "z_m": src["z"], "note": f"from study {src['study']}"}}
     else:
         for s in study["speeds"]:
             st = newton.ChainState(x0=tuple(study["x0"]), rho=2.0)
@@ -307,7 +385,7 @@ def _case_subject(sp, cid: str) -> str:
 
 
 def _case_tag(c: dict) -> str:
-    return f"{progress.chain_tag(c['speed'])}/it{c['iteration']}"
+    return f"{progress.chain_tag(c['speed'])}/{'free' if c.get('kind') == 'free' else 'it' + str(c['iteration'])}"
 
 
 def register_case(sp, study, led, topo, speed, theta, z, chain: str, iteration: int, role: str) -> str:
@@ -320,6 +398,44 @@ def register_case(sp, study, led, topo, speed, theta, z, chain: str, iteration: 
     return cid
 
 
+def register_free_case(sp, led, chain: str, src: dict, iteration: int) -> str:
+    """The free case released from src (a finished captive case of this or another study)."""
+    cid = free_case_id(src["case_id"])
+    if cid not in led["cases"]:
+        parent_sp = sp if src["study"] == sp.name else layout.find_study(src["study"])
+        led["cases"][cid] = {"speed": float(src["speed"]), "theta": float(src["theta"]), "z": float(src["z"]),
+                             "chain": chain, "iteration": iteration, "role": "free", "kind": "free",
+                             "parent": {"study": src["study"], "case_id": src["case_id"],
+                                        "dir": str(parent_sp.case_dir(src["case_id"])), "row": src["row"]},
+                             "state": LIVE_CASE, "job": None, "jobs": [], "failures": 0, "row": None, "note": ""}
+    return cid
+
+
+def parent_final(parent: dict) -> tuple[Path, Path]:
+    d = Path(parent["dir"])
+    return d / f"{parent['case_id']}_final.cas.h5", d / f"{parent['case_id']}_final.dat.h5"
+
+
+def free_request(sp, study, topo, cid: str, c: dict) -> dict:
+    """request.json of a free case: the release (6DOF state and UDF loads) and parent files."""
+    par, fc = c["parent"], study["free"]
+    thrust = fc["thrust"] == "constant"
+    if thrust and not all(isinstance(par["row"].get(k), (int, float)) for k in ("thrust_N", "thrust_arm_m")):
+        raise ValueError(f"{cid}: parent {par['case_id']} row has no thrust_N/thrust_arm_m for --thrust constant")
+    rel = free_release(topo, c["theta"], c["z"], study.get("cg_offset", (0.0, 0.0)),
+                       thrust_N=float(par["row"]["thrust_N"]) if thrust else 0.0,
+                       thrust_arm_m=float(par["row"]["thrust_arm_m"]) if thrust else 0.0,
+                       inertia_full=fc["inertia_full_kgm2"])
+    cas, dat = parent_final(par)
+    side = read_json(Path(par["dir"]) / f"{par['case_id']}.json", {}) or {}
+    return {"kind": "free", "parent_study": par["study"], "parent_case_id": par["case_id"],
+            "parent_cas": str(cas), "parent_dat": str(dat),
+            "parent_hull_centroid": (side.get("hull_after") or {}).get("centroid"),
+            "release": rel.to_dict(), "export_every_s": fc["export_every_s"],
+            "implicit_update": fc.get("implicit_update"),
+            **free_plan(topo, study, c["speed"])}
+
+
 def submit_case(sp, study, led, topo, cid: str, slurm: Slurm) -> str | None:
     c = led["cases"][cid]
     plan = case_plan(topo, study, c["speed"])
@@ -328,6 +444,9 @@ def submit_case(sp, study, led, topo, cid: str, slurm: Slurm) -> str | None:
            "chain": c["chain"], "iteration": c["iteration"], "role": c["role"], **plan,
            "max_iter_per_step": topo["run"]["max_iter_per_step"],
            "stop_margin_s": study.get("stop_margin_s", 1500)}
+    if c.get("kind") == "free":
+        req.update(free_request(sp, study, topo, cid, c))
+        plan = {k: req[k] for k in plan}
     write_json(sp.case_dir(cid) / layout.REQUEST_FILE, req)
     logs = sp.case_log_dir(cid)
     logs.mkdir(parents=True, exist_ok=True)  # Slurm does not create it
@@ -369,6 +488,36 @@ def quality_ok(row: dict, study: dict) -> bool:
     return True
 
 
+def free_verdict(row: dict | None, fc: dict) -> tuple[str, str]:
+    """VERIFIED / DRIFTED / UNSETTLED / FREE_FAILED for a reduced free case, and why."""
+    def g(k):
+        v = (row or {}).get(k)
+        return float(v) if isinstance(v, (int, float)) else float("nan")
+
+    if not row or not math.isfinite(g("theta_mean_deg")):
+        return FREE_FAILED, (row or {}).get("note", "not reduced")
+    if row.get("complete") is not True:
+        return FREE_FAILED, f"motion history ends at t={g('t_last_s'):.3f} s, before the planned end"
+    tt, tz = float(fc["tol_theta_deg"]), float(fc["tol_z_m"])
+    txt = (f"dtheta {g('dtheta_deg'):+.3f} deg (drift {g('theta_drift_deg'):+.3f}), "
+           f"dz {g('dz_m') * 1000:+.2f} mm (drift {g('z_drift_m') * 1000:+.2f}); tol {tt} deg, {tz * 1000:g} mm")
+    if not (abs(g("theta_drift_deg")) <= tt and abs(g("z_drift_m")) <= tz):
+        return UNSETTLED, txt
+    if abs(g("dtheta_deg")) <= tt and abs(g("dz_m")) <= tz:
+        return VERIFIED, txt
+    return DRIFTED, txt
+
+
+def _fmt_free(row: dict) -> str:
+    def g(k):
+        v = row.get(k)
+        return float(v) if isinstance(v, (int, float)) else float("nan")
+
+    return (f"theta {g('theta_mean_deg'):+.3f}±{g('theta_se_deg'):.3f} deg ({g('dtheta_deg'):+.3f})  "
+            f"z {g('z_mean_m') * 1000:+.2f}±{g('z_se_m') * 1000:.2f} mm ({g('dz_m') * 1000:+.2f})  "
+            f"from {row.get('motion_source', '?')}")
+
+
 def _fmt_r(row: dict) -> str:
     def g(k):
         v = row.get(k)
@@ -389,14 +538,19 @@ def resolve_cases(sp, study, led, topo, slurm: Slurm, active: dict[str, str]) ->
         st = read_json(cdir / layout.STATUS_FILE, {}) or {}
         if st.get("state") == "complete":
             _record_mem(c, slurm, c.get("job"))
+            free = c.get("kind") == "free"
             try:
-                row = collect.reduce_case(topo, cdir, cg)
+                row = collect.reduce_free_case(topo, cdir) if free else collect.reduce_case(topo, cdir, cg)
             except Exception as exc:  # malformed output: do not rerun blindly
                 row, c["note"] = None, f"reduce failed: {exc!r}"
-            if row is None or "R_lift_N" not in row:
+            if row is None or ("theta_mean_deg" if free else "R_lift_N") not in row:
                 c["state"] = BAD_CASE
                 c["note"] = c["note"] or (row or {}).get("note", "no sidecar")
                 _emit(sp, "case", _case_subject(sp, cid), "BAD", f"{_case_tag(c)} {c['note']}")
+            elif free:
+                c["row"], c["state"] = row, DONE_CASE
+                _emit(sp, "case", _case_subject(sp, cid), "REDUCED", f"{_case_tag(c)} {_fmt_free(row)}"
+                      f"{_fmt_mem(c, study)}")
             else:
                 c["row"], c["state"] = row, DONE_CASE
                 ok = quality_ok(row, study)
@@ -481,7 +635,7 @@ def points_for(led: dict, speed: float, study: dict) -> list[newton.Point]:
     pts = []
     for cid, c in led["cases"].items():
         row = c.get("row")
-        if not row or abs(c["speed"] - speed) > 1e-9:
+        if not row or abs(c["speed"] - speed) > 1e-9 or c.get("kind") == "free":
             continue
 
         def f(k, alt=None):
@@ -526,6 +680,9 @@ def drive_chains(sp, study, led, topo, slurm: Slurm) -> None:
         if study["mode"] == "grid":
             _drive_grid(sp, study, led, topo, slurm, ch)
             continue
+        if ch.get("phase") == "free":
+            _drive_free(sp, study, led, key, ch)
+            continue
         for _ in range(5):
             st = newton.ChainState.from_dict(ch["state"])
             d = newton.decide(points_for(led, ch["speed"], study), st, cfg)
@@ -535,8 +692,19 @@ def drive_chains(sp, study, led, topo, slurm: Slurm) -> None:
                                   "rho": d.rho, "points": d.points, "note": d.note})
             tag = f"{progress.chain_tag(ch['speed'])}/it{d.state.iteration}"
             if d.terminal:
-                ch["status"] = d.kind
                 ch["result"] = _chain_result(d)
+                fc = study.get("free")
+                if fc and d.kind in fc["relax_on"] and d.best is not None:
+                    # Not the end: verify the equilibrium by letting the hull go.
+                    ch["newton_status"], ch["phase"] = d.kind, "free"
+                    best_row = led["cases"][d.best.case_id]["row"]
+                    ch["source"] = {"key": key, "speed": ch["speed"], "study": sp.name,
+                                    "case_id": d.best.case_id, "theta": d.best.theta, "z": d.best.z,
+                                    "row": {k: best_row.get(k) for k in SOURCE_ROW_KEYS}}
+                    _emit(sp, "newton", tag, d.kind, _fmt_decision(d) + "  -> free-running relaxation")
+                    _drive_free(sp, study, led, key, ch)
+                    break
+                ch["status"] = d.kind
                 _emit(sp, "study", progress.chain_tag(ch["speed"]), d.kind, _fmt_decision(d))
                 break
             _emit(sp, "newton", tag, d.kind.upper(), _fmt_decision(d))
@@ -548,6 +716,35 @@ def drive_chains(sp, study, led, topo, slurm: Slurm) -> None:
             ch["status"] = newton.FAILED
             _emit(sp, "study", progress.chain_tag(ch["speed"]), newton.FAILED,
                   "decisions only proposed points that are already finished or bad")
+
+
+#: What a free case needs from its parent's reduced row (thrust) plus the residuals for the record.
+SOURCE_ROW_KEYS = ("thrust_N", "thrust_arm_m", "R_lift_N", "R_pitch_Nm", "drag_N")
+
+
+def _drive_free(sp, study, led, key: str, ch: dict) -> None:
+    """Submit the chain's free case, or, once it is resolved, end the chain with the verdict."""
+    src = ch["source"]
+    subject = progress.chain_tag(ch["speed"])
+    if not ch["pending"] or free_case_id(src["case_id"]) not in ch["pending"]:
+        it = (ch.get("state") or {}).get("iteration", 0)
+        cid = register_free_case(sp, led, key, src, it)
+        ch["pending"] = [cid]
+        if led["cases"][cid]["state"] == LIVE_CASE:
+            _emit(sp, "study", subject, "RELAX", f"release from {progress.short_case(src['case_id'], sp.topology)}"
+                  f"  θ={src['theta']:+.2f}° z={src['z'] * 1000:+.1f}mm")
+            return
+    c = led["cases"][ch["pending"][0]]
+    verdict, why = (free_verdict(c.get("row"), study["free"]) if c["state"] == DONE_CASE
+                    else (FREE_FAILED, c.get("note") or c["state"]))
+    row = c.get("row") or {}
+    ch["status"] = verdict
+    ch["result"] = {**(ch.get("result") or {}), "free": {
+        "case_id": ch["pending"][0], "verdict": verdict, "note": why,
+        **{k: row.get(k) for k in ("theta_mean_deg", "z_mean_m", "dtheta_deg", "dz_m",
+                                   "theta_drift_deg", "z_drift_m", "motion_source")}}}
+    ch["history"].append({"at": _now(), "kind": verdict, "free_case": ch["pending"][0], "note": why})
+    _emit(sp, "study", subject, verdict, why)
 
 
 def _chain_result(d: newton.Decision) -> dict | None:
@@ -596,8 +793,8 @@ def write_results(sp, led) -> None:
     for cid, c in led["cases"].items():
         if c.get("row"):
             rows.append({"case_id": cid, "chain": c["chain"], "iteration": c["iteration"],
-                         "role": c["role"], "state": c["state"],
-                         **{k: v for k, v in c["row"].items() if k != "case_id"}})
+                         "role": c["role"], "state": c["state"], "kind": c.get("kind", "captive"),
+                         **{k: v for k, v in c["row"].items() if k not in ("case_id", "kind")}})
     if rows:
         collect.write_rows(sp.results_csv, rows)
 
@@ -735,8 +932,12 @@ def status_text(sp) -> str:
         eta = s.get("eta_s")
         mem = f"{c['max_rss_gb']:.1f}G" if c.get("max_rss_gb") else "-"
         r = c.get("row") or {}
-        rs = (f"{r['R_lift_N']:+.2f} / {r['R_pitch_Nm']:+.3f}"
-              if isinstance(r.get("R_lift_N"), float) else (c.get("note") or "")[:40])
+        if isinstance(r.get("R_lift_N"), float):
+            rs = f"{r['R_lift_N']:+.2f} / {r['R_pitch_Nm']:+.3f}"
+        elif isinstance(r.get("theta_mean_deg"), float):
+            rs = f"free: θ {r['theta_mean_deg']:+.3f}° z {r['z_mean_m'] * 1000:+.2f}mm"
+        else:
+            rs = (c.get("note") or "")[:40]
         out.append(f"{progress.short_case(cid, sp.topology):<30} {c['iteration']:>3} {c['role']:<8} "
                    f"{c['state']:<7} {str(c.get('job') or '-'):>9} {c['failures']:>4}  {step:>11} "
                    f"{(f'{sps:.1f}' if sps else '-'):>6} {progress.fmt_hours(eta) if eta else '-':>7} "

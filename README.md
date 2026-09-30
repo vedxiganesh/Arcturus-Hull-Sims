@@ -53,6 +53,7 @@ Cluster commands use `~/hullsweep_code/bin/hs` (add `alias hs=~/hullsweep_code/b
 | 6. Study | cluster | `hs new --topology T --study S --speeds 2.0,2.5,3.0 --x0 1.5,-0.01 [--seed …/results.csv]` |
 | 7. Monitor | cluster | `tail -f` the progress log it prints; `hs status S` |
 | 8. Fetch | local | `python hs.py sync pull S [--with-data]` |
+| 9. Free-running check of a finished study | cluster | `hs new --topology T --study S_free --from-study S` |
 
 `hs new` prints the resolved plan: paths, run plan per speed, license use, tolerances, envelope,
 and seeds. It creates nothing until you type the study name back (`--yes` skips this,
@@ -92,6 +93,76 @@ A grid sweep with no Newton is `hs new … --speeds … --theta -1,0,1 --z -0.01
   - Other endings: MAX_ITERS, OUTSIDE_ENVELOPE, STALLED, FAILED.
 - **Seeds.** `--seed results.csv` imports completed points (same topology and run plan) instead
   of rerunning them.
+
+## Free-running 2DOF relaxation (verifies a converged point)
+
+The Newton result comes from captive runs. The relaxation runs the same hull free in heave and
+pitch, starting from the converged captive solution, and checks that the hull stays put.
+
+- **Two ways in.**
+  - `hs new … --x0 … --relax`: each chain that ends CONVERGED (see `--relax-on`) goes on to
+    phase `free` in the same study.
+  - `hs new --topology T --study S_free --from-study S`: a separate study that releases the
+    converged chains of an already finished study S. Use this for studies created before
+    `--relax` existed. `--case C` (repeatable) releases chosen finished captive cases instead,
+    e.g. the best case of a MAX_ITERS chain. `--speeds` filters.
+- **One free case per chain.** Its id is `<parent case id>_free`.
+- **Prep** (`fluent_ops.prepare_free_case`):
+  - Reads the parent's `<id>_final.cas.h5` and `.dat.h5`, with no initialization, and checks
+    the hull centroid against the parent's sidecar.
+  - Writes a generated UDF `sw_sdof.c` (`common.udf_source`) into the case dir, then compiles
+    and loads it as `libudf` there.
+  - Re-creates the 6DOF dynamic zones (`stage::libudf`), as in the GUI setup.
+- **UDF.** Surge, sway, roll and yaw are fixed.
+  - Mass and inertia are scaled to the simulated domain: 35 kg becomes 17.5 kg for the half
+    domain. The 2DOF.c of the GUI setup applied the full 35 kg to the half domain, which is why
+    that run sank.
+  - The parent's thrust T acts as a constant body-frame load on the thrust line. This is the
+    same balance as `collect.py`'s R_lift and R_pitch, so a correct equilibrium starts in
+    balance. `--thrust none` tows at the CG instead, which is a different problem.
+- **Release state.**
+  - The 6DOF CG is the displaced CG plus `cg_offset`, i.e. the point the moments were taken
+    about.
+  - The orientation starts at 0, so the 6DOF angles are increments from θ*.
+  - All foreground cell zones follow the body as passive zones. That includes the solid
+    `fluid:1`, which the GUI setup left static.
+- **Run.**
+  - Same dt as the captive runs; `--free-settle` + `--free-average` hull lengths (default: the
+    topology's run).
+  - Flow time and the step counter carry on from the parent; steps are counted from release.
+  - Autosaves write the case each time (the mesh moves). A resume reads the newest cas+dat
+    pair. The `.6dof` history and the EnSight index are set aside as `*.part<k>`, like the
+    report files.
+- **Outputs** (in the case dir):
+  - `ensight/free*`: EnSight Gold on a flow-time trigger, every `--export-every` s. The TUI
+    line is the one that wrote job 22643276's series. Budget roughly 0.3–0.5 GB per frame at
+    6.8M cells.
+  - `sw-motion_*.6dof`: Fluent's 6DOF motion history.
+  - `sw-motion.csv`: the live 6DOF state, sampled every 10 steps by `run_case`.
+  - `sweep-forces.out`: moments stay about the release CG.
+- **Verdict** (`ledger.free_verdict`, over the averaging window):
+  - **VERIFIED**: |Δθ| and θ drift ≤ `--free-tol-theta` (0.1°), and |Δz| and z drift ≤
+    `--free-tol-z` (2 mm).
+  - **DRIFTED**: settled, but elsewhere (the settled point is in the row).
+  - **UNSETTLED**: still moving.
+  - **FREE_FAILED**: no usable motion history.
+
+  The chain's `result` keeps the captive result and adds `free`.
+- **Inertia.** `--ixx-full` is the FULL-boat pitch inertia about the CG, and the code halves it
+  for the half domain.
+  - The default is 0.439 kg·m² (k = 0.11 m = 0.09 L: mass concentrated near the CG).
+  - It replaces 2DOF.c's 137.4 kg·m², which meant a 2 m radius of gyration.
+  - Inertia sets how fast the hull responds, not where it settles.
+- **Implicit 6DOF update** (`--implicit-6dof auto|on|off`, `--implicit-relax 0.1`,
+  `--implicit-interval 1`).
+  - A body this light, next to the pitch added inertia of the water, is prone to the added-mass
+    instability of explicit 6DOF coupling.
+  - `auto` turns `dynamic_mesh.options.implicit_update` on when k < 0.25 L. It is ON at the
+    default Ixx and off at 137.4.
+  - The choice is resolved when the study is created, frozen in study.json, and printed by
+    `hs new`.
+  - Implicit update costs extra motion updates per time step. If the free run oscillates,
+    lower `--implicit-relax` before touching dt.
 
 ## Run sizing
 

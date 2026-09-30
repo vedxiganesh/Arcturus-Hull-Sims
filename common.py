@@ -234,6 +234,18 @@ def plan_run(topo: Topology, speed: float) -> RunPlan:
     return RunPlan(dt_s=dt, steps=int(math.ceil(end / dt)), settle_time_s=settle, end_time_s=end)
 
 
+def plan_free_run(topo: Topology, speed: float, settle_hull_lengths: float,
+                  average_hull_lengths: float) -> RunPlan:
+    """A free-running relaxation: the captive dt, its own duration (times relative to release)."""
+    L = topo.get("hull_length_m")
+    if L is None:
+        raise ValueError(f"{topo.path.name}: hull_length_m not measured yet")
+    dt = plan_run(topo, speed).dt_s
+    settle = settle_hull_lengths * L / speed
+    end = settle + average_hull_lengths * L / speed
+    return RunPlan(dt_s=dt, steps=int(math.ceil(end / dt)), settle_time_s=settle, end_time_s=end)
+
+
 def check_envelope(topo: Topology, theta_deg: float, z_m: float) -> list[str]:
     env = topo["envelope"]
     msgs = []
@@ -276,3 +288,136 @@ def report_groups(topo: Topology) -> dict[str, list[str]]:
 def report_name(kind: str, comp: str, group: str) -> str:
     """kind 'f' (force) or 'm' (moment about the displaced CG)."""
     return f"{REPORT_PREFIX}-{kind}{comp}-{group}"
+
+
+# ---------------------------------------------------------------------------
+# Free-running (2DOF: heave + pitch) relaxation from a converged captive case
+# ---------------------------------------------------------------------------
+
+#: A free case's id is its parent captive case's id plus this suffix.
+FREE_SUFFIX = "_free"
+
+#: Full-boat inertia about the CG (kg*m^2), from Arcturus/2DOF.c, the UDF of the GUI 2DOF
+#: setup. Only IXX matters here: X is the pitch axis and the other rotations are fixed.
+#: 2DOF.c's IXX (137.4, a 1.98 m radius of gyration) is wrong; `hs new --ixx-full` overrides it,
+#: by default with PITCH_IXX_FULL.
+INERTIA_2DOF_C = {"ixx": 137.39090849, "iyy": 49.57274782, "izz": 171.00789722,
+                  "ixy": -0.00027617, "ixz": 0.00025974, "iyz": 4.31192636}
+#: Full-boat pitch inertia about the CG, kg*m^2 (2026-09-30, replaces 2DOF.c's value):
+#: k = 0.11 m = 0.09 L, i.e. mass concentrated near the CG.
+PITCH_IXX_FULL = 0.439
+#: Below this radius of gyration (as a fraction of hull length) the body is light compared
+#: with its likely added pitch inertia, and `--implicit-6dof auto` turns implicit update on.
+IMPLICIT_6DOF_BELOW_K_OVER_L = 0.25
+
+
+def pitch_gyration_ratio(topo: "Topology", ixx_full: float) -> float:
+    """Pitch radius of gyration over hull length, k/L with k = sqrt(Ixx / m) (full boat)."""
+    return math.sqrt(float(ixx_full) / float(topo["mass_full_kg"])) / float(topo["hull_length_m"])
+
+#: DEFINE_SDOF_PROPERTIES name and library. The dynamic zones use "stage::libudf", as the
+#: GUI setup did.
+SDOF_UDF_NAME = "stage"
+UDF_LIBRARY = "libudf"
+
+
+def free_case_id(captive_id: str) -> str:
+    return captive_id + FREE_SUFFIX
+
+
+@dataclass(frozen=True)
+class Release:
+    """The rigid body let go at a captive point.
+
+    Loads are in the 6DOF LOCAL frame, which is the global frame at release (orientation 0)
+    and turns with the body afterwards. The hull is already trimmed at release, so the
+    body's bow axis in that frame is R(theta) @ bow, not bow.
+    """
+
+    theta_deg: float
+    z_m: float
+    fluent_angle_deg: float
+    cg: tuple[float, float, float]
+    mass_kg: float
+    inertia_kgm2: dict
+    thrust_N: float
+    thrust_arm_m: float
+    load_force_local: tuple[float, float, float]
+    load_moment_local: tuple[float, float, float]
+
+    def to_dict(self) -> dict:
+        return dict(self.__dict__)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Release":
+        return cls(**{**d, "cg": tuple(d["cg"]), "load_force_local": tuple(d["load_force_local"]),
+                      "load_moment_local": tuple(d["load_moment_local"])})
+
+
+def free_release(topo: Topology, theta_deg: float, z_m: float, cg_offset=(0.0, 0.0),
+                 thrust_N: float = 0.0, thrust_arm_m: float = 0.0,
+                 inertia_full: dict | None = None) -> Release:
+    """6DOF state and UDF loads that reproduce the captive balance of collect.py.
+
+    CG: the displaced CG plus the body-frame cg_offset, i.e. the point collect.py took
+    moments about. Thrust: the constant T along the body bow axis, on a line thrust_arm_m
+    'up' of the CG (negative = below). That gives R_lift's +T sin(theta) and R_pitch's
+    arm*T, so a hull at the captive equilibrium starts in balance. Mass and inertia are
+    scaled to the simulated domain (halved for half_domain), like the weight in R_lift.
+    """
+    if not np.allclose(topo.up, [0.0, 0.0, 1.0]):
+        raise ValueError("free_release assumes up = +Z (heave is the free translation)")
+    xf = case_transform(topo, theta_deg, z_m)
+    R = rotation_about_axis(xf.axis, xf.fluent_angle_deg)
+    d_body = np.array([0.0, float(cg_offset[0]), float(cg_offset[1])])
+    cg = np.asarray(xf.moment_center) + R @ d_body
+    F_body = topo.bow * float(thrust_N)
+    M_body = np.cross(topo.up * float(thrust_arm_m), F_body)
+    frac = topo.domain_fraction
+    inertia = {k: float(v) * frac for k, v in (inertia_full or INERTIA_2DOF_C).items()}
+    return Release(
+        theta_deg=float(theta_deg), z_m=float(z_m), fluent_angle_deg=xf.fluent_angle_deg,
+        cg=tuple(float(v) for v in cg), mass_kg=float(topo["mass_full_kg"]) * frac,
+        inertia_kgm2=inertia, thrust_N=float(thrust_N), thrust_arm_m=float(thrust_arm_m),
+        load_force_local=tuple(float(v) + 0.0 for v in R @ F_body),
+        load_moment_local=tuple(float(v) + 0.0 for v in R @ M_body),
+    )
+
+
+def udf_source(rel: Release, note: str = "") -> str:
+    """C source of the 2DOF UDF for one release: heave and pitch free, the rest fixed."""
+    I, F, M = rel.inertia_kgm2, rel.load_force_local, rel.load_moment_local
+    g = "{:.10g}".format
+    return f"""#include "udf.h"
+
+/* Generated by hullsweep (common.udf_source). {note}
+   Simulated-domain mass and inertia; constant thrust as a body-frame load.
+   release: theta {rel.theta_deg:+.4f} deg, z {rel.z_m * 1000:+.2f} mm, CG {list(rel.cg)}
+   thrust {rel.thrust_N:.6g} N on a line {rel.thrust_arm_m:+.6g} m 'up' of the CG */
+
+DEFINE_SDOF_PROPERTIES({SDOF_UDF_NAME}, prop, dt, time, dtime)
+{{
+    prop[SDOF_MASS] = {g(rel.mass_kg)};
+    prop[SDOF_IXX] = {g(I['ixx'])};
+    prop[SDOF_IYY] = {g(I['iyy'])};
+    prop[SDOF_IZZ] = {g(I['izz'])};
+    prop[SDOF_IXY] = {g(I['ixy'])};
+    prop[SDOF_IXZ] = {g(I['ixz'])};
+    prop[SDOF_IYZ] = {g(I['iyz'])};
+
+    prop[SDOF_ZERO_TRANS_X] = TRUE;   /* sway */
+    prop[SDOF_ZERO_TRANS_Y] = TRUE;   /* surge: the inlet carries the speed */
+    prop[SDOF_ZERO_TRANS_Z] = FALSE;  /* heave: free */
+    prop[SDOF_ZERO_ROT_X] = FALSE;    /* pitch: free */
+    prop[SDOF_ZERO_ROT_Y] = TRUE;     /* roll */
+    prop[SDOF_ZERO_ROT_Z] = TRUE;     /* yaw */
+
+    prop[SDOF_LOAD_LOCAL] = TRUE;
+    prop[SDOF_LOAD_F_X] = {g(F[0])};
+    prop[SDOF_LOAD_F_Y] = {g(F[1])};
+    prop[SDOF_LOAD_F_Z] = {g(F[2])};
+    prop[SDOF_LOAD_M_X] = {g(M[0])};
+    prop[SDOF_LOAD_M_Y] = {g(M[1])};
+    prop[SDOF_LOAD_M_Z] = {g(M[2])};
+}}
+"""

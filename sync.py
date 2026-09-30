@@ -233,7 +233,7 @@ echo "$T" >&2
 args=(-C "$P" --exclude='*.tmp' --exclude='ledger.lock' "$T/$N")
 if [ -d "$S/$T/$N" ]; then
     cd "$S"
-    mapfile -t F < <(find "$T/$N" -maxdepth 2 -type f \\( -name '*.json' -o -name '*.out' -o -name '{layout.PROGRESS_FILE}' \\))
+    mapfile -t F < <(find "$T/$N" -maxdepth 2 -type f \\( -name '*.json' -o -name '*.out' -o -name '*.6dof' -o -name 'sw-motion.csv' -o -name 'sw_sdof.c' -o -name '{layout.PROGRESS_FILE}' \\))
     [ "${{#F[@]}}" -gt 0 ] && args+=(-C "$S" "${{F[@]}}")
 fi
 tar czf - "${{args[@]}}"
@@ -251,7 +251,11 @@ tar czf - "${{args[@]}}"
 
     if with_data:
         led = json.loads((local / layout.LEDGER_FILE).read_text())
-        cids = sorted({(ch.get("result") or {}).get("case_id") for ch in led["chains"].values()} - {None})
+        cids = set()
+        for ch in led["chains"].values():  # chain results that live in THIS study's scratch
+            res = ch.get("result") or {}
+            cids |= {c for c in (res.get("case_id"), (res.get("free") or {}).get("case_id")) if c in led["cases"]}
+        cids = sorted(cids)
         if not cids:
             print("no chain results yet; no data to pull")
             return local

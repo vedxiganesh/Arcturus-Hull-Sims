@@ -274,7 +274,7 @@ def fake_reduce(monkeypatch):
         rl, rp = model(req["theta_deg"], req["z_m"])
         return {"case_id": req["case_id"], "complete": True, "R_lift_N": rl, "R_pitch_Nm": rp,
                 "R_lift_se": 0.2, "R_pitch_se": 0.03, "Fz_total": 170.0, "Fz_total_drift": 0.001,
-                "Mx_total": 5.0, "Mx_total_drift": 0.001}
+                "Mx_total": 5.0, "Mx_total_drift": 0.001, "thrust_N": 12.0, "thrust_arm_m": -0.4}
 
     monkeypatch.setattr(ledger.collect, "reduce_case", reduce_case)
 
