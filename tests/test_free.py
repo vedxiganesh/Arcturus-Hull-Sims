@@ -384,13 +384,13 @@ def test_arm_six_dof_zones_and_read_back(topo):
         fo.arm_six_dof(solver, topo, rel)
 
 
-def test_ensight_command_matches_the_run_that_exported():
+def test_ensight_command_registers_every_n_steps():
     import fluent_ops as fo
 
-    cmd = fo.ensight_command("phase-2", 0.05)
+    cmd = fo.ensight_command("phase-2", 0.1, 0.005, "sw-ensight-77")
     assert cmd == ('/file/transient-export/ensight-gold-transient ensight/free () * () pressure wall-shear '
                    'phase-2-vof cell-convective-courant-number moving-mesh-courant-number q no yes '
-                   '"sw-ensight" "flow-time" 0.05 yes')
+                   '"sw-ensight-77" "time-step" 20 yes')
 
 
 def test_free_resume_needs_a_case_with_the_data(tmp_path):
@@ -413,3 +413,21 @@ def test_set_aside_keeps_motion_and_ensight_index(tmp_path):
     names = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
     assert names == {"sweep-forces.part1.out", "sw-motion_stage.part1.6dof", "ensight/free.part1.encas",
                      "sw-motion.csv"}
+
+
+
+def test_ensight_merge_unions_sessions(tmp_path):
+    import ensight_merge as em
+
+    def idx(path, nums, t0):
+        times = " ".join(f"{t0 + 0.1 * i:.5e}" for i in range(len(nums)))
+        path.write_text('FORMAT\ntype:  ensight gold\nGEOMETRY\nmodel:  1   "free*****.geo"\nTIME\n'
+                        f"time set: 1 Model\nnumber of steps: {len(nums)}\nfilename start number: {nums[0]}\n"
+                        f'filename increment: 20\ntime values: {times}\nSCRIPTS\nmetadata: "free.xml"\n')
+        for n in nums:
+            (tmp_path / f"free{n:05d}.geo").write_text("g")
+
+    idx(tmp_path / "free.part1.encas", [20, 40, 60], 0.1)
+    idx(tmp_path / "free.encas", [100, 120], 0.5)
+    got = em.parse_frames(em.merge_case(tmp_path))
+    assert sorted(got) == [20, 40, 60, 100, 120] and got[120] == pytest.approx(0.6)

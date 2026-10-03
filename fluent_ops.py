@@ -818,41 +818,65 @@ def arm_six_dof(solver, topo: Topology, rel: Release, implicit: dict | None = No
     return {"dynamic_zone_routes": routes, "dynamic_zones": got, "implicit_update": implicit_state}
 
 
-def ensight_command(water_phase: str, every_s: float) -> str:
-    """One-line TUI registration of an EnSight Gold transient export on a flow-time trigger.
+def ensight_command(water_phase: str, every_s: float, dt_s: float, name: str = ENSIGHT_OBJECT) -> str:
+    """One-line TUI registration of an EnSight Gold transient export every N time steps.
 
     Same prompt order as run_hull_vof.py's build_export_command: name, interior surfaces,
     cell zones, scalars ending with 'q', cell-centred?, binary?, export name, trigger,
-    frequency, separate files?. That string wrote the EnSight series of job 22643276
-    (Trimaran_HalfD.encas: these five scalars plus velocity).
+    frequency, separate files?.
+
+    The trigger is "time-step", N = round(every_s / dt): dt is fixed in these runs, and the
+    "flow-time" form did not give the requested spacing (study at2_trimaran_halfd_2p5_free
+    exported every step; job 22643276 every 0.05 s instead of 0.1 s).
     """
     scalars = ["pressure", "wall-shear", f"{water_phase}-vof",
                "cell-convective-courant-number", "moving-mesh-courant-number"]
+    steps = max(1, round(every_s / dt_s))
     return " ".join(["/file/transient-export/ensight-gold-transient", ENSIGHT_BASENAME, "()", "*", "()",
-                     *scalars, "q", "no", "yes", f'"{ENSIGHT_OBJECT}"', '"flow-time"',
-                     f"{float(every_s):g}", "yes"])
+                     *scalars, "q", "no", "yes", f'"{name}"', '"time-step"', str(steps), "yes"])
 
 
-def configure_ensight(solver, topo: Topology, case_dir: Path, every_s: float) -> bool:
-    """Replace any earlier export object with ours. Returns False (and logs) if it failed."""
+ENSIGHT_REGISTRY = f"{ENSIGHT_DIR}/.objects"  # export-object names this case has registered
+_DELETE_CANDIDATES = ("/file/transient-export/delete {n}", "/file/transient-export/delete-export {n}",
+                      "/solve/execute-commands/delete {n}")
+
+
+def configure_ensight(solver, topo: Topology, case_dir: Path, every_s: float, dt_s: float, tag: str,
+                     resumed: bool = False) -> bool:
+    """Register this session's export under a fresh name. Returns False (and logs) if it failed.
+
+    Export objects ride along in the autosaved case, so a resume leaves them alone (see `resumed`). A fresh registration uses a new name
+    and tries to remove legacy objects (two live exports would write every frame twice).
+    """
     (case_dir / ENSIGHT_DIR).mkdir(exist_ok=True)
-    for name in ("export-1", ENSIGHT_OBJECT):
-        for cmd in (f"/solve/execute-commands/delete {name}", f"/file/transient-export/settings/delete {name}"):
+    try:
+        log(f"transient-export menu: {names(solver.tui.file.transient_export, 'child_names')}")
+    except Exception:
+        pass
+    registry = case_dir / ENSIGHT_REGISTRY
+    old = registry.read_text().split() if registry.exists() else []
+    if resumed and old:
+        # The autosaved case carries the export object and its trigger; re-registering makes
+        # Fluent re-prompt for the name and shifts every later answer. The cadence is therefore
+        # fixed by the session that first registered it.
+        log(f"EnSight export {old[-1]} is carried in the resumed case; not re-registering")
+        return True
+    for name in dict.fromkeys([*old, ENSIGHT_OBJECT, "export-1"]):
+        for tmpl in _DELETE_CANDIDATES:
             try:
-                tui(solver, cmd)
+                tui(solver, tmpl.format(n=name))
+                break
             except Exception:
-                pass
-    cmd = ensight_command(topo["water_phase"], every_s)
+                continue
+    name = f"{ENSIGHT_OBJECT}-{tag}"
+    cmd = ensight_command(topo["water_phase"], every_s, dt_s, name)
     log(f"EnSight export: {cmd}")
     try:
         tui(solver, cmd)
     except Exception as exc:
         log(f"WARNING: EnSight export NOT registered ({exc})")
         return False
-    try:
-        tui(solver, "/file/transient-export/settings/list")
-    except Exception:
-        pass
+    registry.write_text("\n".join([*old, name]) + "\n")
     return True
 
 

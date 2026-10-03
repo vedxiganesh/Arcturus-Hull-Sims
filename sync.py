@@ -293,4 +293,9 @@ tar czf - --files-from /dev/null "${{D[@]}}"
         print("  none (EnSight is exported only by free 2DOF cases)")
         return
     cases = sorted({Path(n).parts[2] for n in got})
+    from ensight_merge import MERGED, merge_case
+
+    for c in cases:  # one continuous series across retries/resumes
+        m = merge_case(dest / topo / study / c / ENSIGHT_DIR)
+        print(f"  {c}: open ensight/{MERGED} for the whole run" if m else f"  {c}: nothing to merge")
     print(f"pulled {len(got)} EnSight files for {', '.join(cases)} into <case>/ensight/ under {dest / topo / study}")

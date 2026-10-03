@@ -184,7 +184,7 @@ def flow_state(solver):
         return None, None
 
 
-def configure(solver, case: Case, topo) -> bool:
+def configure(solver, case: Case, topo, resumed: bool) -> bool:
     """Time step, autosave, report files, exports. Returns False if a free case's EnSight
     export could not be registered."""
     rc = solver.settings.solution.run_calculation
@@ -209,7 +209,8 @@ def configure(solver, case: Case, topo) -> bool:
 
     fo.relativize_report_files(solver)  # report files land in the case dir
     if case.free:
-        return fo.configure_ensight(solver, topo, case.dir, float(case.req["export_every_s"]))
+        return fo.configure_ensight(solver, topo, case.dir, float(case.req["export_every_s"]),
+                                    float(case.req["dt_s"]), os.environ.get("SLURM_JOB_ID", "local"), resumed)
     for cmd in ("/solve/execute-commands/delete export-1",
                 "/file/transient-export/settings/delete export-1"):
         try:
@@ -379,7 +380,7 @@ def main() -> int:
         done = (n or 0) - case.step0
         if resume is None and not case.free and t is not None and abs(t) > 1e-9:
             log(f"WARNING: fresh case starts at flow-time {t}, not 0")
-        if not configure(solver, case, topo):
+        if not configure(solver, case, topo, resume is not None):
             case.emit("WARNING", "EnSight export NOT registered; the run continues without it")
         on_chunk = MotionLog(solver, case, topo) if case.free else None
         if on_chunk is not None and resume is None:
