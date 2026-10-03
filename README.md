@@ -24,7 +24,8 @@ CLUSTER
                                                 logs/<case_id>/<jobid>.out|err, logs/_advance/
 ~/orcd/scratch/hullsweep/<topo>/<study>/        progress.log  <- tail -f this
 ~/orcd/scratch/hullsweep/<topo>/<study>/<case>/ request.json, <case>.cas.h5, sidecar, autosaves,
-                                                <case>_final.cas/dat, sweep-forces.out, status.json
+                                                <case>_final.cas/dat, sweep-forces.out, status.json,
+                                                ensight/ (free cases)
 LOCAL
 Arcturus/hullsweep/                             code only
 Arcturus/hullsweep_data/<topo>/                 topology inputs (+ local-only <topo>_source.cas.h5)
@@ -52,7 +53,7 @@ Cluster commands use `~/hullsweep_code/bin/hs` (add `alias hs=~/hullsweep_code/b
 | 5. Smoke test (new topology or code) | cluster | `hs new --topology T --study T_smoke1 --speeds 2.5 --x0 0,0 --smoke --max-iters 2` |
 | 6. Study | cluster | `hs new --topology T --study S --speeds 2.0,2.5,3.0 --x0 1.5,-0.01 [--seed …/results.csv]` |
 | 7. Monitor | cluster | `tail -f` the progress log it prints; `hs status S` |
-| 8. Fetch | local | `python hs.py sync pull S [--with-data]` |
+| 8. Fetch | local | `python hs.py sync pull S [--with-data] [--ensight]` (`--ensight`: every case's `ensight/` dir, large) |
 | 9. Free-running check of a finished study | cluster | `hs new --topology T --study S_free --from-study S` |
 
 `hs new` prints the resolved plan: paths, run plan per speed, license use, tolerances, envelope,

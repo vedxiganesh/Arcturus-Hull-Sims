@@ -4,7 +4,8 @@
   push_topology(name)    hullsweep_data/<name>/{topology.json, template[, meshes]}
                          -> ~/orcd/pool/hullsweep/<name>/
   pull(study)            the study's small files -> hullsweep_data/<topo>/<study>/
-                         (optionally the final .cas/.dat of each chain's result)
+                         (optionally the final .cas/.dat of each chain's result,
+                         and every case's EnSight series)
 
 Each transfer is ONE ssh connection carrying a tar stream (one Duo prompt, no
 rsync needed on Windows). Remote paths come from layout.py; nothing here is
@@ -216,7 +217,7 @@ def _extract_stream(stream, dest: Path) -> list[str]:
     return names
 
 
-def pull(study: str, with_data: bool = False) -> Path:
+def pull(study: str, with_data: bool = False, with_ensight: bool = False) -> Path:
     """Study files from pool + scratch into hullsweep_data/<topo>/<study>/ (one merged tree)."""
     _require_local()
     layout.check_name(study, "study")
@@ -265,4 +266,31 @@ tar czf - "${{args[@]}}"
         got = _extract_stream(p.stdout, dest)
         _finish(p, "pull --with-data")
         print(f"pulled {len(got)} data files for {', '.join(cids)}")
+
+    if with_ensight:
+        _pull_ensight(scr, topo, study, dest)
     return local
+
+
+def _pull_ensight(scr: str, topo: str, study: str, dest: Path) -> None:
+    """Every case's ensight/ dir (the .encas index, .xml, and per-step .geo/.scl*/.vel)."""
+    from fluent_ops import ENSIGHT_DIR
+
+    # The whole directory: a resumed case also holds its set-aside free.part<k>.encas.
+    script = f"""set -e
+cd "{scr}"
+mapfile -t D < <(find "{topo}/{study}" -mindepth 2 -maxdepth 2 -type d -name {ENSIGHT_DIR} | sort)
+for d in "${{D[@]}}"; do
+    echo "  $d: $(find "$d" -type f | wc -l) files ($(find "$d" -maxdepth 1 -name '*.encas' | wc -l) .encas), $(du -sh "$d" | cut -f1)" >&2
+done
+tar czf - --files-from /dev/null "${{D[@]}}"
+"""
+    print("EnSight output on the cluster:", flush=True)  # before ssh's stderr listing
+    p = _ssh(script, stdout=subprocess.PIPE)
+    got = _extract_stream(p.stdout, dest)
+    _finish(p, "pull --ensight")
+    if not got:
+        print("  none (EnSight is exported only by free 2DOF cases)")
+        return
+    cases = sorted({Path(n).parts[2] for n in got})
+    print(f"pulled {len(got)} EnSight files for {', '.join(cases)} into <case>/ensight/ under {dest / topo / study}")

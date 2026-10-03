@@ -7,7 +7,7 @@ LOCAL (Arcturus/hullsweep, reefs-mobo env)
   python prepare_case.py template --topology T        (normal terminal: 25R2 licensing)
   hs sync push-code [--dry-run]
   hs sync push-topology T [--with-meshes] [--force]
-  hs sync pull S [--with-data]
+  hs sync pull S [--with-data] [--ensight]
 
 CLUSTER (~/hullsweep_code/bin/hs)
   hs new --topology T --study S --speeds 2.0,2.5 --x0 THETA,Z [--relax] [options]
@@ -114,7 +114,7 @@ def cmd_sync(a) -> None:
     elif a.what == "push-topology":
         sync.push_topology(a.name, with_meshes=a.with_meshes, force=a.force)
     elif a.what == "pull":
-        sync.pull(a.name, with_data=a.with_data)
+        sync.pull(a.name, with_data=a.with_data, with_ensight=a.ensight)
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +441,8 @@ def main(argv=None) -> None:
     sp_ = ssub.add_parser("pull")
     sp_.add_argument("name", help="study name")
     sp_.add_argument("--with-data", action="store_true", help="also the final cas/dat of each chain result")
+    sp_.add_argument("--ensight", action="store_true",
+                     help="also every case's ensight/ dir (.encas, .xml, .geo, .scl*, .vel); large")
     sp_.set_defaults(fn=cmd_sync)
 
     n = sub.add_parser("new", help="cluster: create a study and submit its first batch",
