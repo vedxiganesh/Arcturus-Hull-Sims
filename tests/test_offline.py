@@ -82,6 +82,26 @@ def test_plan_run_anchored_on_validated_run(topo):
     assert p1.end_time_s == pytest.approx(10 * 1.5 / 1.0)
 
 
+def test_study_dt_scale_keeps_windows_and_rescales_steps(topo):
+    import ledger
+
+    base = ledger.case_plan(topo, {}, 2.5)
+    half = ledger.case_plan(topo, {"dt_scale": 0.5}, 2.5)
+    assert half["dt_s"] == pytest.approx(base["dt_s"] / 2)
+    assert half["end_time_s"] == pytest.approx(base["end_time_s"])
+    assert half["settle_time_s"] == pytest.approx(base["settle_time_s"])
+    assert abs(half["steps"] - 2 * base["steps"]) <= 1
+
+
+def test_study_absolute_dt_overrides_speed_rule(topo):
+    import ledger
+
+    for v in (1.0, 2.5):
+        p = ledger.case_plan(topo, {"dt_s": 0.002, "dt_scale": 1.0}, v)
+        assert p["dt_s"] == pytest.approx(0.002)
+        assert p["steps"] == math.ceil(p["end_time_s"] / 0.002)
+
+
 def test_case_id_is_safe_and_unique(topo):
     a = case_id(topo.name, 1.5, -1.0, 0.005)
     b = case_id(topo.name, 1.5, -1.0, 0.0)

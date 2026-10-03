@@ -158,6 +158,10 @@ def build_study(a, topo) -> dict:
         sys.exit("--case picks parent cases for --from-study")
     if a.relax and mode != "newton":
         sys.exit("--relax follows Newton convergence; use --from-study to release chosen points")
+    if a.dt_scale <= 0:
+        sys.exit("--dt-scale must be > 0")
+    if a.dt is not None and (a.dt <= 0 or a.dt_scale != 1.0):
+        sys.exit("--dt must be > 0 and cannot be combined with --dt-scale")
     x0 = floats(a.x0) if a.x0 else None
     if x0 is not None and len(x0) != 2:
         sys.exit("--x0 is THETA_DEG,Z_M")
@@ -183,6 +187,7 @@ def build_study(a, topo) -> dict:
         "tol_lift": a.tol_lift, "tol_pitch": a.tol_pitch, "drift_factor": a.drift_factor,
         "fd_theta": a.fd_theta, "fd_z": a.fd_z, "max_iters": a.max_iters,
         "cg_offset": list(a.cg_offset), "max_retries": a.max_retries,
+        "dt_scale": a.dt_scale, "dt_s": a.dt,
         "run_override": run_override, "stop_margin_s": stop_margin, "slurm": slurm,
         "smoke": bool(a.smoke),
         "free": free_config(a, topo) if (a.relax or mode == "free") else None,
@@ -460,6 +465,12 @@ def main(argv=None) -> None:
     n.add_argument("--fd-theta", type=float, default=1.0, help="stencil step, deg")
     n.add_argument("--fd-z", type=float, default=0.010, help="stencil step, m")
     n.add_argument("--max-iters", type=int, default=6, help="batches per chain")
+    n.add_argument("--dt", type=float, default=None,
+                   help="absolute dt in s for EVERY speed of this study (replaces the "
+                        "ref_dt*ref_speed/V rule; exclusive with --dt-scale)")
+    n.add_argument("--dt-scale", type=float, default=1.0,
+                   help="multiply the topology-derived dt by this for this study only "
+                        "(steps follow; a Newton --seed from a different dt is rejected)")
     n.add_argument("--cg-offset", type=float, nargs=2, default=(0.0, 0.0), metavar=("DY", "DZ"))
     n.add_argument("--seed", help="results.csv of an earlier sweep/study to import as completed points")
     n.add_argument("--partition", default="mit_preemptable")

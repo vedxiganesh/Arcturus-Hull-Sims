@@ -38,7 +38,8 @@ import collect
 import layout
 import newton
 import progress
-from common import case_id, file_sha1, free_case_id, free_release, plan_free_run, plan_run, quantize_point
+from common import (RunPlan, case_id, file_sha1, free_case_id, free_release, plan_free_run, plan_run,
+                    quantize_point)
 
 #: Shared Web entitlement (CLAUDE.md section 12): ~71 anshpc usable, 4 cores ride on the CFD task.
 HPC_POOL = 71
@@ -222,9 +223,23 @@ def license_need(slurm_cfg: dict) -> int:
     return slurm_cfg["lanes"] * max(slurm_cfg["ntasks"] - INCLUDED_CORES, 0)
 
 
+def _scale_dt(plan, study: dict):
+    """The study's dt (absolute, else dt_scale) applied to a RunPlan: windows stay in flow time,
+    steps follow dt."""
+    if study.get("dt_s"):
+        dt = float(study["dt_s"])
+    else:
+        k = float(study.get("dt_scale") or 1.0)
+        if k == 1.0:
+            return plan
+        dt = plan.dt_s * k
+    return RunPlan(dt_s=dt, steps=math.ceil(plan.end_time_s / dt),
+                   settle_time_s=plan.settle_time_s, end_time_s=plan.end_time_s)
+
+
 def case_plan(topo, study: dict, speed: float) -> dict:
-    """dt, steps and windows for one case, with the study's run override applied."""
-    plan = plan_run(topo, speed)
+    """dt, steps and windows for one case, with the study's dt scale and run override applied."""
+    plan = _scale_dt(plan_run(topo, speed), study)
     dt, steps, settle, end = plan.dt_s, plan.steps, plan.settle_time_s, plan.end_time_s
     ov = study.get("run_override") or {}
     if "steps" in ov:
@@ -238,7 +253,7 @@ def case_plan(topo, study: dict, speed: float) -> dict:
 def free_plan(topo, study: dict, speed: float) -> dict:
     """dt, steps and windows of a free case (times from release), run override applied."""
     fc = study["free"]
-    p = plan_free_run(topo, speed, fc["settle_hull_lengths"], fc["average_hull_lengths"])
+    p = _scale_dt(plan_free_run(topo, speed, fc["settle_hull_lengths"], fc["average_hull_lengths"]), study)
     dt, steps, settle, end = p.dt_s, p.steps, p.settle_time_s, p.end_time_s
     ov = study.get("run_override") or {}
     if "steps" in ov:
