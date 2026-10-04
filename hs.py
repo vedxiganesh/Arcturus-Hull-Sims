@@ -7,7 +7,8 @@ LOCAL (Arcturus/hullsweep, reefs-mobo env)
   python prepare_case.py template --topology T        (normal terminal: 25R2 licensing)
   hs sync push-code [--dry-run]
   hs sync push-topology T [--with-meshes] [--force]
-  hs sync pull S [--with-data] [--ensight]
+  hs sync pull S [--with-data] [--ensight [--ensight-stride N] [--ensight-from T] [--ensight-to T]
+                                          [--streams K] [-y]]
 
 CLUSTER (~/hullsweep_code/bin/hs)
   hs new --topology T --study S --speeds 2.0,2.5 --x0 THETA,Z [--relax] [options]
@@ -115,7 +116,8 @@ def cmd_sync(a) -> None:
     elif a.what == "push-topology":
         sync.push_topology(a.name, with_meshes=a.with_meshes, force=a.force)
     elif a.what == "pull":
-        sync.pull(a.name, with_data=a.with_data, with_ensight=a.ensight)
+        sync.pull(a.name, with_data=a.with_data, with_ensight=a.ensight, ensight_stride=a.ensight_stride,
+                  ensight_from=a.ensight_from, ensight_to=a.ensight_to, streams=a.streams, yes=a.yes)
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +462,12 @@ def main(argv=None) -> None:
     sp_.add_argument("--with-data", action="store_true", help="also the final cas/dat of each chain result")
     sp_.add_argument("--ensight", action="store_true",
                      help="also every case's ensight/ dir (.encas, .xml, .geo, .scl*, .vel); large")
+    sp_.add_argument("--ensight-stride", type=int, default=10, help="keep every Nth frame (default 10; 1 = all)")
+    sp_.add_argument("--ensight-from", type=float, help="first flow time (s) to keep")
+    sp_.add_argument("--ensight-to", type=float, help="last flow time (s) to keep")
+    sp_.add_argument("--streams", type=int, default=1,
+                     help="parallel ssh connections for --ensight; each is its own Duo prompt on Windows")
+    sp_.add_argument("-y", "--yes", action="store_true", help="skip the --ensight size confirmation")
     sp_.set_defaults(fn=cmd_sync)
 
     n = sub.add_parser("new", help="cluster: create a study and submit its first batch",

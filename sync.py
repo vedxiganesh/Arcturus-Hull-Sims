@@ -19,8 +19,10 @@ import io
 import json
 import shlex
 import subprocess
+import re
 import sys
 import tarfile
+import threading
 import time
 from pathlib import Path
 
@@ -201,9 +203,9 @@ ls -la "$D"
 # ---------------------------------------------------------------------------
 
 
-def _extract_stream(stream, dest: Path) -> list[str]:
+def _extract_stream(stream, dest: Path, mode: str = "r|gz", on_file=None) -> list[str]:
     names = []
-    with tarfile.open(fileobj=stream, mode="r|gz") as tar:
+    with tarfile.open(fileobj=stream, mode=mode) as tar:
         for m in tar:
             parts = Path(m.name).parts
             if m.name.startswith("/") or ".." in parts:
@@ -214,10 +216,14 @@ def _extract_stream(stream, dest: Path) -> list[str]:
                 tar.extract(m, dest)
             if m.isfile():
                 names.append(m.name)
+                if on_file:
+                    on_file(m.size)
     return names
 
 
-def pull(study: str, with_data: bool = False, with_ensight: bool = False) -> Path:
+def pull(study: str, with_data: bool = False, with_ensight: bool = False, ensight_stride: int = 10,
+         ensight_from: float | None = None, ensight_to: float | None = None, streams: int = 1,
+         yes: bool = False) -> Path:
     """Study files from pool + scratch into hullsweep_data/<topo>/<study>/ (one merged tree)."""
     _require_local()
     layout.check_name(study, "study")
@@ -268,34 +274,134 @@ tar czf - "${{args[@]}}"
         print(f"pulled {len(got)} data files for {', '.join(cids)}")
 
     if with_ensight:
-        _pull_ensight(scr, topo, study, dest)
+        _pull_ensight(scr, topo, study, dest, ensight_stride, ensight_from, ensight_to, streams, yes)
     return local
 
 
-def _pull_ensight(scr: str, topo: str, study: str, dest: Path) -> None:
-    """Every case's ensight/ dir (the .encas index, .xml, and per-step .geo/.scl*/.vel)."""
-    from fluent_ops import ENSIGHT_DIR
+def _gb(n: float) -> str:
+    return f"{n / 1e9:.1f} GB"
 
-    # The whole directory: a resumed case also holds its set-aside free.part<k>.encas.
+
+def _pull_ensight(scr: str, topo: str, study: str, dest: Path, stride: int = 10,
+                  t_from: float | None = None, t_to: float | None = None, streams: int = 1,
+                  yes: bool = False) -> None:
+    """Every case's ensight/ dir, thinned to every `stride`-th frame (and the flow-time window).
+
+    Stage 1 (one ssh): list the directory with sizes and fetch the small non-frame files
+    (.encas indexes, .xml), which give each frame's flow time. Stage 2: the chosen per-step
+    .geo/.scl*/.vel files, as plain tar (float binaries do not compress; gzip on the login
+    node was the bottleneck) over `streams` ssh connections. Files already here with the
+    same size are skipped, so a re-pull only fetches new frames.
+    """
+    from ensight_merge import MERGED, merge_case, parse_frames
+    from fluent_ops import ENSIGHT_DIR, ENSIGHT_BASENAME
+
+    if stride < 1 or streams < 1:
+        sys.exit("--ensight-stride and --streams must be >= 1")
+    stem = ENSIGHT_BASENAME.rsplit("/", 1)[-1]
+    frame_re = re.compile(rf"^{re.escape(stem)}(\d+)\.")
     script = f"""set -e
 cd "{scr}"
-mapfile -t D < <(find "{topo}/{study}" -mindepth 2 -maxdepth 2 -type d -name {ENSIGHT_DIR} | sort)
-for d in "${{D[@]}}"; do
-    echo "  $d: $(find "$d" -type f | wc -l) files ($(find "$d" -maxdepth 1 -name '*.encas' | wc -l) .encas), $(du -sh "$d" | cut -f1)" >&2
-done
-tar czf - --files-from /dev/null "${{D[@]}}"
+L=$(find "{topo}/{study}" -mindepth 3 -maxdepth 3 -path '*/{ENSIGHT_DIR}/*' -type f -printf '%p\\t%s\\n' | sort)
+if [ -z "$L" ]; then echo 0; else printf '%s\\n' "$L" | wc -l; printf '%s\\n' "$L"; fi
+printf '%s\\n' "$L" | awk -F'\\t' 'NF && $1 !~ /\\/{stem}[0-9]+\\./ {{print $1}}' | tar cf - -T -
 """
-    print("EnSight output on the cluster:", flush=True)  # before ssh's stderr listing
+    print("EnSight output on the cluster:", flush=True)
     p = _ssh(script, stdout=subprocess.PIPE)
-    got = _extract_stream(p.stdout, dest)
-    _finish(p, "pull --ensight")
-    if not got:
+    n = int(p.stdout.readline())
+    listing = []  # (relative path, size)
+    for _ in range(n):
+        path, size = p.stdout.readline().decode().rstrip("\n").split("\t")
+        listing.append((path, int(size)))
+    small = _extract_stream(p.stdout, dest, mode="r|")
+    _finish(p, "pull --ensight (listing)")
+    if not listing:
         print("  none (EnSight is exported only by free 2DOF cases)")
         return
-    cases = sorted({Path(n).parts[2] for n in got})
-    from ensight_merge import MERGED, merge_case
 
-    for c in cases:  # one continuous series across retries/resumes
+    cases: dict[str, dict[int, list]] = {}  # case -> {frame number: [(path, size)]}
+    for path, size in listing:
+        parts = Path(path).parts
+        m = frame_re.match(parts[-1])
+        if m:
+            cases.setdefault(parts[2], {}).setdefault(int(m.group(1)), []).append((path, size))
+    for path in small:
+        cases.setdefault(Path(path).parts[2], {})
+
+    todo = []  # (path, size) still to fetch
+    for c, frames in sorted(cases.items()):
+        ens = dest / topo / study / c / ENSIGHT_DIR
+        total = sum(s for fl in frames.values() for _, s in fl)
+        nums = sorted(frames)
+        if t_from is not None or t_to is not None:
+            times: dict[int, float] = {}
+            for idx in ens.glob(f"{stem}*.encas"):
+                if idx.name != MERGED:
+                    times.update(parse_frames(idx))
+            lo = t_from if t_from is not None else -float("inf")
+            hi = t_to if t_to is not None else float("inf")
+            nums = [k for k in nums if k in times and lo <= times[k] <= hi]
+        keep = nums[::stride]
+        if nums and keep[-1] != nums[-1]:
+            keep.append(nums[-1])  # always the latest frame
+        want = [f for k in keep for f in frames[k]]
+        need = [(p_, s_) for p_, s_ in want
+                if not ((dest / p_).is_file() and (dest / p_).stat().st_size == s_)]
+        todo += need
+        print(f"  {c}: {len(frames)} frames, {_gb(total)} on the cluster; keeping {len(keep)} "
+              f"(stride {stride}) = {_gb(sum(s for _, s in want))}, {_gb(sum(s for _, s in need))} to transfer")
+    size = sum(s for _, s in todo)
+    print(f"  total to transfer: {len(todo)} files, {_gb(size)} over {streams} stream(s)")
+    if todo and not yes and input("  proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+        sys.exit("aborted")
+
+    if todo:
+        buckets = [[0, []] for _ in range(streams)]  # greedy balance by bytes
+        for f in sorted(todo, key=lambda f: -f[1]):
+            b = min(buckets, key=lambda b: b[0])
+            b[0] += f[1]
+            b[1].append(f[0])
+        done = [0]
+        lock = threading.Lock()
+        errs = []
+
+        def tick(nbytes: int) -> None:
+            with lock:
+                done[0] += nbytes
+
+        def drain(proc) -> None:
+            try:
+                _extract_stream(proc.stdout, dest, mode="r|", on_file=tick)
+            except Exception as exc:  # reported after the join
+                errs.append(exc)
+
+        procs, threads = [], []
+        for _, names in buckets:
+            if not names:
+                continue
+            q = _ssh(f'set -e; cd "{scr}"; echo R; tar cf - -T -', stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            while q.stdout.readline().strip() != b"R":  # authenticated; the next stream may now prompt
+                if q.poll() is not None:
+                    sys.exit("pull --ensight: an ssh stream died before starting")
+            q.stdin.write(("\n".join(names) + "\n").encode())
+            q.stdin.close()
+            t = threading.Thread(target=drain, args=(q,), daemon=True)
+            t.start()
+            procs.append(q)
+            threads.append(t)
+        t0 = time.time()
+        while any(t.is_alive() for t in threads):
+            for t in threads:
+                t.join(timeout=30 / len(threads))
+            print(f"  {_gb(done[0])} / {_gb(size)}  ({done[0] / max(time.time() - t0, 1) / 1e6:.0f} MB/s)",
+                  flush=True)
+        for q in procs:
+            _finish(q, "pull --ensight")
+        if errs:
+            sys.exit(f"pull --ensight: extraction failed: {errs[0]}")
+
+    for c in sorted(cases):  # one continuous series across retries/resumes
         m = merge_case(dest / topo / study / c / ENSIGHT_DIR)
-        print(f"  {c}: open ensight/{MERGED} for the whole run" if m else f"  {c}: nothing to merge")
-    print(f"pulled {len(got)} EnSight files for {', '.join(cases)} into <case>/ensight/ under {dest / topo / study}")
+        print(f"  {c}: open ensight/{MERGED} for the pulled frames" if m else f"  {c}: nothing to merge")
+    print(f"pulled EnSight for {', '.join(sorted(cases))} into <case>/ensight/ under {dest / topo / study}")
+    print(f"  (free.encas lists every frame; open {MERGED}, which lists only those present)")
