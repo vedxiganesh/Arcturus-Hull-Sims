@@ -189,6 +189,56 @@ def test_newton_study_relaxes_after_convergence(site, fake_reduce, fake_free_red
     assert "VERIFIED" in sp.progress_log.read_text() and "free:" in ledger.status_text(sp)
 
 
+def test_extend_reopens_a_finished_free_case(site, fake_reduce, fake_free_reduce):
+    sp, st = new_study(site, free=FREE)
+    slurm = FakeSlurm()
+    ledger.init_study(sp, st)
+    ledger.advance(sp, slurm)
+    led = _run_to_free(sp, slurm)
+    fcid = led["chains"]["V2p50"]["pending"][0]
+    cdir = sp.case_dir(fcid)
+    steps0 = json.loads((cdir / layout.REQUEST_FILE).read_text())["steps"]
+
+    # not finished yet: refused
+    with pytest.raises(ValueError, match="only finished"):
+        ledger.extend(sp, None, 10, None, slurm)
+
+    # the fake run: final files, a sidecar, and a complete status at step `steps0`
+    for ext in (".cas.h5", ".dat.h5"):
+        (cdir / f"{fcid}_final{ext}").write_bytes(b"x")
+    (cdir / f"{fcid}.json").write_text(json.dumps({"steps": steps0, "end_time_s": steps0 * 0.005,
+                                                   "step_release": 5000}))
+    finish_all(sp, slurm, time_step=steps0)
+    assert ledger.advance(sp, slurm) == "done"
+
+    ledger.extend(sp, None, None, 1.0, slurm)  # +1 s at dt 0.005 = 200 steps
+    led = json.loads(sp.ledger_json.read_text())
+    c = led["cases"][fcid]
+    assert c["state"] == ledger.LIVE_CASE and c["extra_steps"] == 200 and not led["done"]
+    assert led["chains"]["V2p50"]["status"] == "active" and c["job"]
+    n = 5000 + steps0  # the final state is now the newest autosave pair
+    assert (cdir / f"sw-stop-{n:05d}.cas.h5").exists() and (cdir / f"sw-stop-{n:05d}.dat.h5").exists()
+    req = json.loads((cdir / layout.REQUEST_FILE).read_text())
+    assert req["steps"] == steps0 + 200 and req["end_time_s"] == pytest.approx((steps0 + 200) * 0.005)
+    assert json.loads((cdir / f"{fcid}.json").read_text())["steps"] == steps0 + 200
+    assert "EXTEND" in sp.progress_log.read_text()
+
+    # and it finishes again, adding to (not replacing) an earlier extension
+    finish_all(sp, slurm, time_step=steps0 + 200)
+    assert ledger.advance(sp, slurm) == "done"
+    ledger.extend(sp, [fcid], 50, None, slurm)
+    assert json.loads(sp.ledger_json.read_text())["cases"][fcid]["extra_steps"] == 250
+
+
+def test_free_plan_extra_steps(topo):
+    st = {"free": FREE}
+    base = ledger.free_plan(topo, st, 2.5)
+    more = ledger.free_plan(topo, st, 2.5, 200)
+    assert more["steps"] == base["steps"] + 200
+    assert more["end_time_s"] == pytest.approx(more["steps"] * base["dt_s"])
+    assert more["settle_time_s"] == base["settle_time_s"]
+
+
 def test_newton_study_without_free_is_unchanged(site, fake_reduce):
     sp, st = new_study(site)  # study.json of existing studies has no "free"
     slurm = FakeSlurm()

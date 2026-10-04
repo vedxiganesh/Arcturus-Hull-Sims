@@ -30,6 +30,7 @@ import getpass
 import json
 import math
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -250,8 +251,9 @@ def case_plan(topo, study: dict, speed: float) -> dict:
     return {"dt_s": dt, "steps": steps, "settle_time_s": settle, "end_time_s": end}
 
 
-def free_plan(topo, study: dict, speed: float) -> dict:
-    """dt, steps and windows of a free case (times from release), run override applied."""
+def free_plan(topo, study: dict, speed: float, extra_steps: int = 0) -> dict:
+    """dt, steps and windows of a free case (times from release), run override applied;
+    `extra_steps` is what `hs extend` added."""
     fc = study["free"]
     p = _scale_dt(plan_free_run(topo, speed, fc["settle_hull_lengths"], fc["average_hull_lengths"]), study)
     dt, steps, settle, end = p.dt_s, p.steps, p.settle_time_s, p.end_time_s
@@ -261,6 +263,9 @@ def free_plan(topo, study: dict, speed: float) -> dict:
         end = steps * dt
     if "settle_time_s" in ov:
         settle = float(ov["settle_time_s"])
+    if extra_steps:
+        steps += int(extra_steps)
+        end = steps * dt
     return {"dt_s": dt, "steps": steps, "settle_time_s": settle, "end_time_s": end}
 
 
@@ -448,7 +453,7 @@ def free_request(sp, study, topo, cid: str, c: dict) -> dict:
             "parent_hull_centroid": (side.get("hull_after") or {}).get("centroid"),
             "release": rel.to_dict(), "export_every_s": fc["export_every_s"],
             "implicit_update": fc.get("implicit_update"),
-            **free_plan(topo, study, c["speed"])}
+            **free_plan(topo, study, c["speed"], c.get("extra_steps", 0))}
 
 
 def submit_case(sp, study, led, topo, cid: str, slurm: Slurm) -> str | None:
@@ -918,6 +923,84 @@ def resume(sp, slurm: Slurm | None = None) -> str:
         led["stopped"] = False
         write_json(sp.ledger_json, led)
     _emit(sp, "study", sp.name, "RESUMED")
+    return advance(sp, slurm)
+
+
+def _link_or_copy(src: Path, dst: Path) -> None:
+    if dst.exists():
+        return
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def extend(sp, case_ids: list[str] | None, add_steps: int | None, add_time_s: float | None,
+           slurm: Slurm | None = None) -> str:
+    """Run more steps of finished free cases, from their final state.
+
+    The final cas+dat become the newest 'autosave' (sw-stop-<step>), so the ordinary resume path
+    in run_case.py continues from them. The case is re-queued with `extra_steps` added to its
+    plan; the averaging window (settle_time_s on) simply grows. Output files of the first run
+    are set aside as *.part<k> by the resume, as after a walltime stop.
+    """
+    if (add_steps is None) == (add_time_s is None):
+        raise ValueError("give exactly one of add_steps / add_time_s")
+    with ledger_lock(sp) as got:
+        if not got:
+            raise RuntimeError("an advance is running; retry in a minute")
+        study = read_json(sp.study_json)
+        led = read_json(sp.ledger_json)
+        topo = layout.load_topology(sp.topology)
+        picks = [cid for cid, c in led["cases"].items()
+                 if c.get("kind") == "free" and (not case_ids or cid in case_ids)]
+        if case_ids:
+            unknown = sorted(set(case_ids) - set(picks))
+            if unknown:
+                raise ValueError(f"not free cases of {sp.name}: {', '.join(unknown)}")
+        if not picks:
+            raise ValueError(f"{sp.name} has no free cases (extend applies to free-running cases)")
+        bad = [f"{cid}: state {led['cases'][cid]['state']}" for cid in picks
+               if led["cases"][cid]["state"] != DONE_CASE]
+        if bad:
+            raise ValueError("only finished (done) cases can be extended; use `hs resume` for "
+                             "interrupted ones: " + "; ".join(bad))
+        if led.get("stopped"):
+            raise ValueError("study is stopped; `hs resume` it first")
+
+        for cid in picks:
+            c, cdir = led["cases"][cid], sp.case_dir(cid)
+            sidecar_p = cdir / f"{cid}.json"
+            st = read_json(cdir / layout.STATUS_FILE, {}) or {}
+            side = read_json(sidecar_p, {}) or {}
+            fin_cas, fin_dat = cdir / f"{cid}_final.cas.h5", cdir / f"{cid}_final.dat.h5"
+            missing = [p.name for p in (fin_cas, fin_dat, sidecar_p) if not p.is_file()]
+            if missing or st.get("state") != "complete" or "step_release" not in side:
+                raise ValueError(f"{cid}: cannot extend (missing {missing or 'complete status/step_release'})")
+            plan = free_plan(topo, study, c["speed"])
+            dt = plan["dt_s"]
+            extra = int(add_steps) if add_steps is not None else int(math.ceil(float(add_time_s) / dt))
+            if extra <= 0:
+                raise ValueError("nothing to add")
+            n_final = int(side["step_release"]) + int(st["time_step"])
+            _link_or_copy(fin_cas, cdir / f"sw-stop-{n_final:05d}.cas.h5")
+            _link_or_copy(fin_dat, cdir / f"sw-stop-{n_final:05d}.dat.h5")
+
+            c["extra_steps"] = int(c.get("extra_steps") or 0) + extra
+            total = plan["steps"] + c["extra_steps"]
+            side.update(steps=total, end_time_s=total * dt)
+            write_json(sidecar_p, side)  # collect.reduce_free_case reads steps/end_time_s from it
+            write_json(cdir / layout.STATUS_FILE, {"case_id": cid, "total_steps": total,
+                                                   "state": "extending", "time_step": int(st["time_step"])})
+            c.update(state=LIVE_CASE, job=None, row=None, failures=0, note="")
+            for ch in led["chains"].values():
+                if cid in ch.get("pending", []):
+                    ch["status"] = "active"
+            _emit(sp, "case", _case_subject(sp, cid), "EXTEND",
+                  f"{_case_tag(c)} +{extra} steps ({extra * dt:.3f} s) -> {total} steps, "
+                  f"from step {int(st['time_step'])} (sw-stop-{n_final:05d})")
+        led["done"] = False
+        write_json(sp.ledger_json, led)
     return advance(sp, slurm)
 
 

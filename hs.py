@@ -14,7 +14,8 @@ CLUSTER (~/hullsweep_code/bin/hs)
   hs new --topology T --study S_free --from-study S [--speeds ...] [--case C ...]   (2DOF relaxation)
   hs status S
   hs stop S | hs resume S
-  hs advance S                      (the orchestrator step; normally run by Slurm)
+  hs extend S (--add-time SECONDS | --add-steps N) [--case C ...]   (longer free run, from its final state)
+  hs advance S                     (the orchestrator step; normally run by Slurm)
   hs list
   hs path case-dir --study S --case C
 
@@ -387,6 +388,17 @@ def cmd_resume(a) -> None:
     print(ledger.resume(layout.find_study(a.study)))
 
 
+def cmd_extend(a) -> None:
+    import ledger
+
+    if (a.add_steps is None) == (a.add_time is None):
+        sys.exit("give exactly one of --add-steps N / --add-time SECONDS")
+    try:
+        print(ledger.extend(layout.find_study(a.study), a.case, a.add_steps, a.add_time))
+    except (ValueError, RuntimeError) as exc:
+        sys.exit(f"hs extend: {exc}")
+
+
 def cmd_list(a) -> None:
     r = layout.roots()
     print(f"site {layout.site()}  pool {r.pool}  scratch {r.scratch}")
@@ -518,6 +530,13 @@ def main(argv=None) -> None:
         p = sub.add_parser(name, help=hlp)
         p.add_argument("study")
         p.set_defaults(fn=fn)
+
+    ex = sub.add_parser("extend", help="run more steps of finished free cases, from their final state")
+    ex.add_argument("study")
+    ex.add_argument("--case", action="append", help="free case id (repeatable); default: all free cases")
+    ex.add_argument("--add-steps", type=int, help="extra time steps")
+    ex.add_argument("--add-time", type=float, help="extra flow time, s (converted with the case's dt)")
+    ex.set_defaults(fn=cmd_extend)
 
     ls = sub.add_parser("list", help="topologies and studies on this site")
     ls.set_defaults(fn=cmd_list)

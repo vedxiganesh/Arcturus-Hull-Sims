@@ -134,6 +134,21 @@ pitch, starting from the converged captive solution, and checks that the hull st
   - Autosaves write the case each time (the mesh moves). A resume reads the newest cas+dat
     pair. The `.6dof` history and the EnSight index are set aside as `*.part<k>`, like the
     report files.
+- **Longer run: `hs extend S (--add-time SECONDS | --add-steps N) [--case C ...]`.** For finished
+  (done) free cases only; an interrupted one just needs `hs resume S`.
+  - The case's `_final.cas/dat` are hard-linked as the newest autosave pair
+    (`sw-stop-<step>`), so the normal resume path continues from the end of the first run.
+  - `extra_steps` is added to the case plan (`ledger.free_plan`), the sidecar's `steps` and
+    `end_time_s` are updated, and the case is re-queued. The chain goes back to `active`.
+  - The settle time is unchanged, so the averaging window grows and the verdict is recomputed
+    over all of it. The first run's `.6dof`, `.out` and EnSight index are set aside as `*.part<k>`.
+  - Extensions add up. The plan, not the CLI history, holds the total (`hs status` shows steps).
+  - `--add-time` is converted with the case's dt (ceil).
+- **Where the run length comes from.** Default `--free-settle` / `--free-average` are the
+  topology's `run.settle_hull_lengths` / `run.average_hull_lengths`
+  (`<topology>/topology.json`; at2_trimaran_halfd: 6 and 4). `hs new --dry-run` prints the
+  resolved settle time, steps and dt per speed, and the study's own values are frozen in
+  `study.json` under `free`.
 - **Outputs** (in the case dir):
   - `ensight/free*`: EnSight Gold on a flow-time trigger, every `--export-every` s. The TUI
     line is the one that wrote job 22643276's series. Budget roughly 0.3–0.5 GB per frame at
