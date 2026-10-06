@@ -46,8 +46,9 @@ Cluster commands use `~/hullsweep_code/bin/hs` (add `alias hs=~/hullsweep_code/b
 
 | Step | Where | Command |
 |---|---|---|
-| 1. Gather a topology (once) | local | `python hs.py topology adopt --name T --source X.cas.h5 --foreground-mesh F.msh.h5 --background-mesh B.msh.h5 --topology-json J` |
-| 2. Build the template (once) | local, **normal terminal** | `python prepare_case.py template --topology T` |
+| 1. Gather a topology (once) | local | `python hs.py topology adopt --name T --source X.cas.h5 --foreground-mesh F.msh.h5 --background-mesh B.msh.h5` |
+| 1b. Write topology.json (once) | local, any shell | `python hs.py topology init --name T --mass-full-kg M --cg=X,Y,Z --thrust-ceiling-full-n F --thrust-offset-below-keel-m D --envelope-theta=LO,HI --envelope-z=LO,HI [--dry-run]` |
+| 2. Build the template (once; skip if `init` says the case is clean) | local, **normal terminal** | `python prepare_case.py template --topology T` |
 | 3. Upload the topology (once) | local | `python hs.py sync push-topology T` |
 | 4. Upload code (after edits) | local | `python hs.py sync push-code` |
 | 5. Smoke test (new topology or code) | cluster | `hs new --topology T --study T_smoke1 --speeds 2.5 --x0 0,0 --smoke --max-iters 2` |
@@ -55,6 +56,19 @@ Cluster commands use `~/hullsweep_code/bin/hs` (add `alias hs=~/hullsweep_code/b
 | 7. Monitor | cluster | `tail -f` the progress log it prints; `hs status S` |
 | 8. Fetch | local | `python hs.py sync pull S [--with-data] [--ensight]` (`--ensight`: every case's `ensight/` dir, large) |
 | 9. Free-running check of a finished study | cluster | `hs new --topology T --study S_free --from-study S` |
+
+**`topology init`** reads the case offline (h5py, `case_reader.py`; no Fluent, no license) and
+never copies another topology's file.
+- **From the case:** zones (overset grids, boundary types, the walls bordering the component
+  fluid, largest first), gravity, the water phase, the open-channel free surface, the floor,
+  the bow (outlet → inlet), half domain (a symmetry plane the hull touches), and the hull stats.
+- **From you:** mass, CG, thrust, envelope. `ref_speed`/`ref_dt`/`run` default to the validated run.
+- **It refuses** a case outside the pipeline's frame (bow −Y, up +Z, symmetry at x = 0) and names
+  the whole-mesh rotation that fixes it. It also refuses a CG off the symmetry plane, or an envelope
+  that takes the hull out of the overset region.
+- **It warns** when the hydrostatic heave at (0, 0) falls outside the envelope (mass and free surface
+  disagree), and when the open-channel bottom level is not the mesh floor.
+- **It says** whether the case is clean enough to be the template, and what to rename it to.
 
 `hs new` prints the resolved plan: paths, run plan per speed, license use, tolerances, envelope,
 and seeds. It creates nothing until you type the study name back (`--yes` skips this,

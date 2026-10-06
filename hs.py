@@ -3,7 +3,10 @@
 
 LOCAL (Arcturus/hullsweep, reefs-mobo env)
   hs topology adopt --name T --source X.cas.h5 [--foreground-mesh F] [--background-mesh B]
-                    [--topology-json J] [--template TPL]
+                    [--template TPL]
+  hs topology init --name T --mass-full-kg M --cg X,Y,Z --thrust-ceiling-full-n T
+                   --thrust-offset-below-keel-m D --envelope-theta=LO,HI --envelope-z=LO,HI
+                   [--case C] [--dry-run] [--force]   (offline: reads the case with h5py)
   python prepare_case.py template --topology T        (normal terminal: 25R2 licensing)
   hs sync push-code [--dry-run]
   hs sync push-topology T [--with-meshes] [--force]
@@ -28,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import shutil
 import sys
 import time
@@ -75,20 +77,22 @@ def cmd_topology_adopt(a) -> None:
     place(a.background_mesh, "background_mesh", ".msh.h5", move=False)
     place(a.template, "template", ".cas.h5", move=True)
 
-    tj = d / layout.TOPOLOGY_FILE
-    if a.topology_json and not tj.exists():
-        raw = json.loads(Path(a.topology_json).read_text())
-        raw["name"] = name
-        for k in ("source_case", "reference_mesh", "template_case"):  # found by pattern now
-            raw.pop(k, None)
-        raw["_comment_template"] = ("template is <name>_template.cas.h5 in this folder, at theta=0, z=0 "
-                                    "with dynamic mesh OFF, built by `prepare_case.py template` from "
-                                    "<name>_source.cas.h5 (the set-up case saved BEFORE any motion).")
-        tj.write_text(json.dumps(raw, indent=2) + "\n")
-        print(f"  wrote {tj}")
-    elif not tj.exists():
-        sys.exit(f"{tj} missing: pass --topology-json to start from an existing one")
+    if not (d / layout.TOPOLOGY_FILE).exists():
+        # Never copied from another topology: it carried their name, mass and hull stats.
+        print(f"next: python hs.py topology init --name {name} --mass-full-kg M --cg X,Y,Z "
+              "--thrust-ceiling-full-n T --thrust-offset-below-keel-m D "
+              "--envelope-theta=LO,HI --envelope-z=LO,HI")
+        return
     cmd_topology_show(argparse.Namespace(name=name))
+
+
+def cmd_topology_init(a) -> None:
+    """topology.json from the case itself (offline) plus the design inputs."""
+    if layout.site() != "local":
+        sys.exit("topology init is a local step")
+    import topology_init
+
+    sys.exit(topology_init.run(a))
 
 
 def cmd_topology_show(a) -> None:
@@ -441,8 +445,26 @@ def main(argv=None) -> None:
     ta.add_argument("--foreground-mesh", help="copied")
     ta.add_argument("--background-mesh", help="copied")
     ta.add_argument("--template", help="an already built template (MOVED)")
-    ta.add_argument("--topology-json", help="start topology.json from this file")
     ta.set_defaults(fn=cmd_topology_adopt)
+    ti = tsub.add_parser("init", help="write topology.json from the case (offline) + design inputs")
+    ti.add_argument("--name", required=True)
+    ti.add_argument("--case", help="default: the folder's template, else its source, else its only .cas.h5")
+    ti.add_argument("--mass-full-kg", type=float, required=True, help="FULL boat mass")
+    ti.add_argument("--cg", required=True, help="X,Y,Z of cg_ref in the case frame, m (write --cg=X,Y,Z if X < 0)")
+    ti.add_argument("--thrust-ceiling-full-n", type=float, required=True)
+    ti.add_argument("--thrust-offset-below-keel-m", type=float, required=True,
+                    help="thrust line below the lowest hull point (negative = above)")
+    ti.add_argument("--envelope-theta", required=True, help="LO,HI deg (write --envelope-theta=-3,6)")
+    ti.add_argument("--envelope-z", required=True, help="LO,HI m (write --envelope-z=-0.06,0.06)")
+    ti.add_argument("--ref-speed", type=float, default=2.5, help="dt anchor speed (validated run)")
+    ti.add_argument("--ref-dt", type=float, default=0.005, help="dt at --ref-speed (validated run)")
+    ti.add_argument("--settle", type=float, default=6.0, help="hull lengths before averaging")
+    ti.add_argument("--average", type=float, default=4.0, help="hull lengths averaged")
+    ti.add_argument("--max-iter", type=int, default=20, help="inner iterations per time step")
+    ti.add_argument("--description")
+    ti.add_argument("--dry-run", action="store_true", help="derive and check, write nothing")
+    ti.add_argument("--force", action="store_true", help="replace an existing topology.json")
+    ti.set_defaults(fn=cmd_topology_init)
     ts = tsub.add_parser("show")
     ts.add_argument("name")
     ts.set_defaults(fn=cmd_topology_show)

@@ -434,6 +434,62 @@ def test_arm_six_dof_zones_and_read_back(topo):
         fo.arm_six_dof(solver, topo, rel)
 
 
+class _ZoneObj:
+    def __init__(self, objs, name):
+        self.objs, self.name = objs, name
+
+    def set_state(self, state):
+        self.objs[self.name].update(json.loads(json.dumps(state)))
+
+
+class StrayOnSetZones(FakeZones):
+    """26R1 as seen in at2_trimaran_halfd_2p5_free_v2: `dz[name] = state` fails but leaves a
+    default stationary zone on fluid:1. `create(zone=)` works. With `fail=False` the set
+    succeeds and the stray is left anyway, so only the read-back can catch it."""
+
+    def __init__(self, fail=True):
+        super().__init__()
+        self.n, self.fail = 0, fail
+
+    def _new(self, s):
+        self.n += 1
+        self.objs[f"dynamic-zone-{self.n}"] = s
+
+    def __setitem__(self, name, state):
+        self._new({"zone": "fluid:1", "type": "stationary"})
+        if self.fail:
+            raise RuntimeError("api-set-var: the object is invalid")
+        super().__setitem__(name, state)
+
+    def __getitem__(self, name):
+        return _ZoneObj(self.objs, name)
+
+    def create(self, zone):
+        self._new({"zone": zone, "type": "stationary"})
+
+
+def test_failed_set_leaves_no_stray_dynamic_zones(topo):
+    import fluent_ops as fo
+
+    rel = free_release(topo, 2.0, -0.01)
+    zones = StrayOnSetZones()
+    solver, _, _ = _fake_solver(zones)
+    facts = fo.arm_six_dof(solver, topo, rel)
+    assert set(facts["dynamic_zone_routes"].values()) == {"create"}
+    st = zones.get_state()
+    assert sorted(z["zone"] for z in st.values()) == sorted(
+        ["wall_mainhull", "wall_amas", "foreground_component_mesh", "fluid:1"])
+    assert all(z["type"] == "rigid-body" for z in st.values())
+
+
+def test_read_back_rejects_duplicate_zones(topo):
+    import fluent_ops as fo
+
+    solver, _, _ = _fake_solver(StrayOnSetZones(fail=False))
+    with pytest.raises(fo.CaseSetupError, match="read back"):
+        fo.arm_six_dof(solver, topo, free_release(topo, 2.0, -0.01))
+
+
 def test_ensight_command_registers_every_n_steps():
     import fluent_ops as fo
 

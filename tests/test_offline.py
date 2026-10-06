@@ -478,3 +478,67 @@ def test_report_file_includes_flow_time():
     rf = solver.settings.solution.monitor.report_files[REPORT_FILE]
     assert rf["report_defs"] == ["sw-fx-total", "sw-mx-total", "flow-time"]
     assert rf["file_name"] == f"{REPORT_FILE}.out"
+
+
+class _FakeReport:
+    """A report definition: attributes are its children; `sticky` children ignore sets."""
+
+    def __init__(self, state, defaults, sticky=()):
+        object.__setattr__(self, "_sticky", set(sticky))
+        self.__dict__.update(defaults)
+        self.__dict__.update(state)
+
+    def __setattr__(self, k, v):
+        if k not in self._sticky:
+            self.__dict__[k] = v
+
+    @property
+    def child_names(self):
+        return [k for k in self.__dict__ if not k.startswith("_")]
+
+    def get_state(self):
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+
+
+class _FakeReports(dict):
+    def __init__(self, defaults, sticky=()):
+        super().__init__()
+        self.defaults, self.sticky = defaults, sticky
+
+    def get_object_names(self):
+        return list(self)
+
+    def __setitem__(self, name, state):
+        super().__setitem__(name, _FakeReport(state, self.defaults, self.sticky))
+
+
+def _report_solver(force_defaults=None, moment_sticky=()):
+    rd = type("RD", (), {})()
+    rd.force = _FakeReports(force_defaults or {})
+    rd.moment = _FakeReports({"mom_center": [0.0, 0.0, 0.0], "mom_axis": [0.0, 0.0, 1.0],
+                              "report_output_type": "Moment Coefficient"}, moment_sticky)
+    solver = type("S", (), {})()
+    solver.settings = type("T", (), {})()
+    solver.settings.solution = type("U", (), {"report_definitions": rd})()
+    return solver, rd
+
+
+def test_sweep_moment_reports_are_dimensional(topo, monkeypatch):
+    """Moment reports default to "Moment Coefficient" (1.633x N m with the default reference
+    values); every captive R_pitch before 2026-10-05 carried that factor."""
+    import fluent_ops as fo
+
+    monkeypatch.setattr(fo, "_one_report_file", lambda *a: None)
+    solver, rd = _report_solver()
+    made = fo.create_sweep_reports(solver, topo, (0.0, -0.236, -0.0725))
+    moments = [n for n in made if n in rd.moment]
+    assert moments and all(rd.moment[n].report_output_type == fo.MOMENT_OUTPUT for n in moments)
+    assert rd.moment["sw-mx-total"].mom_center == [0.0, -0.236, -0.0725]
+
+    solver, _ = _report_solver(moment_sticky=("report_output_type",))
+    with pytest.raises(fo.CaseSetupError, match="reads back as 'Moment Coefficient'"):
+        fo.create_sweep_reports(solver, topo, (0.0, -0.236, -0.0725))
+
+    solver, _ = _report_solver(force_defaults={"report_output_type": "Drag Coefficient"})
+    with pytest.raises(fo.CaseSetupError, match="dimensional output"):
+        fo.create_sweep_reports(solver, topo, (0.0, -0.236, -0.0725))

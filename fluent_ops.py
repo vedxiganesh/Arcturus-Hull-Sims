@@ -410,9 +410,18 @@ def set_time_step(solver, dt: float, max_iter: int) -> None:
 _CENTER = ("mom_center", "moment_center", "center")
 _AXIS = ("mom_axis", "moment_axis", "axis")
 
+#: Moment reports default to "Moment Coefficient": M / (0.5 rho v^2 A L) with the case's
+#: reference values (Fluent defaults 1.225, 1, 1, 1), i.e. 1.633x the moment in N m.
+#: Every captive R_pitch before 2026-10-05 was inflated by that factor.
+MOMENT_OUTPUT = "Moment"
+
 
 def create_sweep_reports(solver, topo: Topology, moment_center) -> list[str]:
-    """Fx,Fy,Fz and Mx,My,Mz (about the displaced CG) per group, in one file."""
+    """Fx,Fy,Fz and Mx,My,Mz (about the displaced CG) per group, in one file.
+
+    Moments are set to dimensional output (MOMENT_OUTPUT) and read back. Forces are
+    already dimensional by default; they are checked, not set.
+    """
     rd = solver.settings.solution.report_definitions
     created = []
     for group, zones in report_groups(topo).items():
@@ -422,6 +431,7 @@ def create_sweep_reports(solver, topo: Topology, moment_center) -> list[str]:
 
             fname = report_name("f", c, group)
             _recreate(rd.force, fname, {"zones": zones, "force_vector": vec})
+            _check_not_coefficient(rd.force[fname], fname)
             created.append(fname)
 
             mname = report_name("m", c, group)
@@ -434,10 +444,31 @@ def create_sweep_reports(solver, topo: Topology, moment_center) -> list[str]:
                 raise KeyError(f"moment report children {kids}: no centre/axis field recognised")
             setattr(m, ck, list(moment_center))
             setattr(m, ak, vec)
+            if "report_output_type" not in kids:
+                raise CaseSetupError(f"moment report children {kids}: no report_output_type")
+            m.report_output_type = MOMENT_OUTPUT
+            got = _leaf_value(m, "report_output_type")
+            if got != MOMENT_OUTPUT:
+                raise CaseSetupError(f"{mname}: report_output_type reads back as {got!r}, wanted {MOMENT_OUTPUT!r}")
             created.append(mname)
-    log(f"created {len(created)} sweep report definitions")
+    log(f"created {len(created)} sweep report definitions (moments output as {MOMENT_OUTPUT!r})")
     _one_report_file(solver, created)
     return created
+
+
+def _leaf_value(obj, name: str):
+    """A child's value: call the leaf, else look it up in get_state() (None if absent)."""
+    try:
+        return getattr(obj, name)()
+    except Exception:
+        return (obj.get_state() or {}).get(name)
+
+
+def _check_not_coefficient(report, name: str) -> None:
+    """Refuse a report that would write a coefficient instead of a dimensional value."""
+    got = _leaf_value(report, "report_output_type")
+    if isinstance(got, str) and "coefficient" in got.lower():
+        raise CaseSetupError(f"{name}: report_output_type is {got!r}; the sweep needs dimensional output")
 
 
 def _recreate(container, name: str, state: dict) -> None:
@@ -734,12 +765,22 @@ def compile_udf(solver, case_dir: Path, rel: Release, note: str = "") -> dict:
 
 
 def _create_dynamic_zone(dz, name: str, zone: str, state: dict) -> str:
-    """Create one dynamic zone. Returns the route used."""
+    """Create one dynamic zone. Returns the route used.
+
+    In 26R1 a failed `dz[name] = state` still leaves an object behind (a default
+    'stationary' zone on the first cell zone, fluid:1). Study at2_trimaran_halfd_2p5_free_v2
+    ran with four of them beside the real fluid:1 zone, and the ama solid lagged the hull.
+    Whatever the failed set added is deleted before the create(zone=...) route.
+    """
+    before = set(dz.get_object_names())
     try:
         dz[name] = state
         return "setitem"
     except Exception as exc:
         log(f"dynamic_zones[{name!r}] = state failed ({exc}); trying create(zone=...)")
+    for stray in sorted(set(dz.get_object_names()) - before):
+        del dz[stray]
+        log(f"deleted dynamic zone {stray!r} left behind by the failed set")
     before = set(dz.get_object_names())
     dz.create(zone=zone)
     new = set(dz.get_object_names()) - before
@@ -806,12 +847,14 @@ def arm_six_dof(solver, topo: Topology, rel: Release, implicit: dict | None = No
                             "rigid_body_properties": rbp}}
         routes[zone] = _create_dynamic_zone(dz, f"sw-dz-{i}", zone, state)
 
+    # A list, not a dict keyed by zone: duplicates on one zone must fail the check.
     got = dz.get_state()
-    seen = {}
+    seen = []
     for z in got.values():
         m = z.get("motion") or {}
-        seen[z.get("zone")] = (z.get("type"), m.get("motion_def"), (m.get("six_dof") or {}).get("passive"))
-    want = {zone: ("rigid-body", motion_def, passive) for zone, passive in specs}
+        seen.append((z.get("zone"), z.get("type"), m.get("motion_def"), (m.get("six_dof") or {}).get("passive")))
+    seen = sorted(seen, key=repr)
+    want = sorted(((zone, "rigid-body", motion_def, passive) for zone, passive in specs), key=repr)
     if seen != want:
         raise CaseSetupError(f"dynamic zones read back as {seen}, wanted {want}")
     log(f"6DOF armed: CG {list(rel.cg)}, mass {rel.mass_kg:g} kg, zones {routes}")

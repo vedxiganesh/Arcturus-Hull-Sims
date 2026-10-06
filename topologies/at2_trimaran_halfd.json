@@ -1,6 +1,6 @@
 {
-  "name": "at2_trimaran_halfd",
-  "description": "At2 trimaran, half domain (symmetry at x=0), single ama, coarse overset mesh.",
+  "name": "at3_trimaran_halfd",
+  "description": "At3 trimaran, half domain (symmetry at x=0), single ama, coarse overset mesh.",
   "_comment_template": "template_case must be at theta=0, z=0 with dynamic mesh OFF; built by `prepare_case.py template` from source_case. source_case is the fully set-up case saved BEFORE any motion (2026-09-12 01:05). Do not use Trimaran_HalfD_run_22643276/hull_6sec.cas.h5: its 6DOF CG had sunk to z=-0.605 m by t=6 s.",
   "source_case": "../At2_Trimaran_Foreground_Labeled_Coarse.cas.h5",
   "reference_mesh": "../At2_Trimaran_Foreground_Labeled_Coarse.msh.h5",
